@@ -978,6 +978,7 @@ int main(int argc, char *argv[]) {
 	// Start the main loop
 	nst_quit = 0;
 	
+    int accumulator = 0;
 	while (!nst_quit) {
 		#ifdef _GTK
 		while (gtk_events_pending()) {
@@ -1020,7 +1021,13 @@ int main(int argc, char *argv[]) {
 				if (timing_frameskip()) {
 					emulator.Execute(NULL, cNstSound, cNstPads);
 				}
-				else { emulator.Execute(cNstVideo, cNstSound, cNstPads); }
+				else { 
+                    char file_name[64];
+                    sprintf(file_name, "/home/mcsmash/dev/emulators/data/%d.png", accumulator);
+                    video_screenshot(file_name);
+                    accumulator ++;
+                    emulator.Execute(cNstVideo, cNstSound, cNstPads); 
+                }
 			}
 		}
 	}
