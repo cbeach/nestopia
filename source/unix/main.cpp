@@ -1022,10 +1022,10 @@ int main(int argc, char *argv[]) {
 					emulator.Execute(NULL, cNstSound, cNstPads);
 				}
 				else { 
-                    char file_name[64];
-                    sprintf(file_name, "/home/mcsmash/dev/emulators/data/%d.png", accumulator);
-                    video_screenshot(file_name);
-                    accumulator ++;
+                    //char file_name[64];
+                    //sprintf(file_name, "/home/casey/dev/emulators/data/%d.png", accumulator);
+                    //video_screenshot(file_name);
+                    //accumulator ++;
                     emulator.Execute(cNstVideo, cNstSound, cNstPads); 
                 }
 			}
