@@ -30,6 +30,12 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <libgen.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <string.h>
 #ifdef _MINGW
 #include <io.h>
 #endif
@@ -912,10 +918,10 @@ int main(int argc, char *argv[]) {
 	cli_handle_command(argc, argv);
 	
 	// Initialize SDL
-	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0) {
-		fprintf(stderr, "Couldn't initialize SDL: %s\n", SDL_GetError());
-		return 1;
-	}
+	//if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0) {
+	//	fprintf(stderr, "Couldn't initialize SDL: %s\n", SDL_GetError());
+	//	return 1;
+	//}
 	
 	// Detect Joysticks
 	input_joysticks_detect();
@@ -927,17 +933,17 @@ int main(int argc, char *argv[]) {
 	input_config_read();
 	
 	// Set the video dimensions
-	video_set_dimensions();
+	//video_set_dimensions();
 	
 	// Create the window
-	#ifdef _GTK
-	if (!conf.misc_disable_gui) { gtkui_init(argc, argv); }
-	#endif
-	video_create();
+	//#ifdef _GTK
+	//if (!conf.misc_disable_gui) { gtkui_init(argc, argv); }
+	//#endif
+	//video_create();
 	
 	// Set up the callbacks
-	Video::Output::lockCallback.Set(VideoLock, userData);
-	Video::Output::unlockCallback.Set(VideoUnlock, userData);
+	//Video::Output::lockCallback.Set(VideoLock, userData);
+	//Video::Output::unlockCallback.Set(VideoUnlock, userData);
 	
 	Sound::Output::lockCallback.Set(SoundLock, userData);
 	Sound::Output::unlockCallback.Set(SoundUnlock, userData);
@@ -952,6 +958,60 @@ int main(int argc, char *argv[]) {
 	nst_load_db();
 	nst_load_fds_bios();
 
+	
+    int sockfd = 0;
+    int newsockfd = 0;
+    socklen_t clilen = 0;
+    int portno = 9090;
+    struct sockaddr_in serv_addr, cli_addr;
+    int  n, pid;
+
+    // 1 MB
+    char buffer[1048576];
+    
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        perror("Error opening socket");
+        exit(1);
+    }
+
+    /* Initialize socket structure */
+    bzero((char *) &serv_addr, sizeof(serv_addr));
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
+    serv_addr.sin_port = htons(portno);
+
+    /* Now bind the host address using bind() call.*/
+    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+        perror("ERROR on binding");
+        exit(1);
+    }
+
+    while (1) {
+        /* Now start listening for the clients, here
+        * process will go in sleep mode and will wait
+        * for the incoming connection
+        */
+        listen(sockfd,5);
+        clilen = sizeof(cli_addr);
+        newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+        if (newsockfd < 0) {
+            perror("ERROR on accept");
+            exit(1);
+        }
+        
+        /* Create child process */
+        pid = fork();
+        if (pid < 0) {
+            perror("ERROR on fork");
+            exit(1);
+        } else if (pid == 0) {
+            /* This is the client process */
+            break;
+        }
+    } /* end of while */
+    
 	// Load a rom from the command line
 	if (argc > 1) {
 		#ifdef _GTK // This is a dirty hack
@@ -974,18 +1034,11 @@ int main(int argc, char *argv[]) {
 		}
 		#endif
 	}
-	
+
 	// Start the main loop
 	nst_quit = 0;
 	
-    int accumulator = 0;
 	while (!nst_quit) {
-		#ifdef _GTK
-		while (gtk_events_pending()) {
-			gtk_main_iteration_do(TRUE);
-		}
-		if (!playing) { gtk_main_iteration_do(TRUE); }
-		#endif
 		if (playing) {
 			while (SDL_PollEvent(&event)) {
 				switch (event.type) {
@@ -1026,7 +1079,7 @@ int main(int argc, char *argv[]) {
                     //sprintf(file_name, "/home/casey/dev/emulators/data/%d.png", accumulator);
                     //video_screenshot(file_name);
                     //accumulator ++;
-                    emulator.Execute(cNstVideo, cNstSound, cNstPads); 
+                    emulator.Execute(NULL, cNstSound, cNstPads); 
                 }
 			}
 		}
