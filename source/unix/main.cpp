@@ -106,6 +106,8 @@ extern char textbuf[32];
 extern bool drawtime;
 extern char timebuf[6];
 
+Video::Output videoStream;
+
 // *******************
 // emulation callbacks
 // *******************
@@ -118,6 +120,7 @@ static bool NST_CALLBACK VideoLock(void* userData, Video::Output& video) {
 
 // called right after Nestopia has finished writing pixels (not called if previous lock failed)
 static void NST_CALLBACK VideoUnlock(void* userData, Video::Output& video) {
+    videoStream = &video;
 	video_unlock_screen(video.pixels);
 }
 
@@ -890,75 +893,6 @@ void nst_load(const char *filename) {
 }
 
 int main(int argc, char *argv[]) {
-	// This is the main function
-	
-	static SDL_Event event;
-	void *userData = (void*)0xDEADC0DE;
-
-	// Set up directories
-	nst_set_dirs();
-	
-	// Set default config options
-	config_set_default();
-	
-	// Read the config file and override defaults
-	config_file_read();
-	
-	// Exit if there is no CLI argument
-	#ifdef _GTK
-	if (argc == 1 && conf.misc_disable_gui) {
-	#else
-	if (argc == 1) {
-	#endif
-		cli_show_usage();
-		return 0;
-	}
-	
-	// Handle command line arguments
-	cli_handle_command(argc, argv);
-	
-	// Initialize SDL
-	//if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0) {
-	//	fprintf(stderr, "Couldn't initialize SDL: %s\n", SDL_GetError());
-	//	return 1;
-	//}
-	
-	// Detect Joysticks
-	input_joysticks_detect();
-	
-	// Set default input keys
-	input_set_default();
-	
-	// Read the input config file and override defaults
-	input_config_read();
-	
-	// Set the video dimensions
-	//video_set_dimensions();
-	
-	// Create the window
-	//#ifdef _GTK
-	//if (!conf.misc_disable_gui) { gtkui_init(argc, argv); }
-	//#endif
-	//video_create();
-	
-	// Set up the callbacks
-	//Video::Output::lockCallback.Set(VideoLock, userData);
-	//Video::Output::unlockCallback.Set(VideoUnlock, userData);
-	
-	Sound::Output::lockCallback.Set(SoundLock, userData);
-	Sound::Output::unlockCallback.Set(SoundUnlock, userData);
-	
-	User::fileIoCallback.Set(nst_cb_file, userData);
-	User::logCallback.Set(nst_cb_log, userData);
-	User::eventCallback.Set(nst_cb_event, userData);
-	
-	// Initialize and load FDS BIOS and NstDatabase.xml
-	nstdb = NULL;
-	fdsbios = NULL;
-	nst_load_db();
-	nst_load_fds_bios();
-
-	
     int sockfd = 0;
     int newsockfd = 0;
     socklen_t clilen = 0;
@@ -1012,6 +946,74 @@ int main(int argc, char *argv[]) {
         }
     } /* end of while */
     
+	// This is the main function
+	
+	static SDL_Event event;
+	void *userData = (void*)0xDEADC0DE;
+
+	// Set up directories
+	nst_set_dirs();
+	
+	// Set default config options
+	config_set_default();
+	
+	// Read the config file and override defaults
+	config_file_read();
+	
+	// Exit if there is no CLI argument
+	#ifdef _GTK
+	if (argc == 1 && conf.misc_disable_gui) {
+	#else
+	if (argc == 1) {
+	#endif
+		cli_show_usage();
+		return 0;
+	}
+	
+	// Handle command line arguments
+	cli_handle_command(argc, argv);
+	
+	// Initialize SDL
+	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0) {
+		fprintf(stderr, "Couldn't initialize SDL: %s\n", SDL_GetError());
+		return 1;
+	}
+	
+	// Detect Joysticks
+	input_joysticks_detect();
+	
+	// Set default input keys
+	input_set_default();
+	
+	// Read the input config file and override defaults
+	input_config_read();
+	
+	// Set the video dimensions
+	video_set_dimensions();
+	
+	// Create the window
+	#ifdef _GTK
+	if (!conf.misc_disable_gui) { gtkui_init(argc, argv); }
+	#endif
+	video_create();
+	
+	// Set up the callbacks
+	Video::Output::lockCallback.Set(VideoLock, userData);
+	Video::Output::unlockCallback.Set(VideoUnlock, userData);
+	
+	Sound::Output::lockCallback.Set(SoundLock, userData);
+	Sound::Output::unlockCallback.Set(SoundUnlock, userData);
+	
+	User::fileIoCallback.Set(nst_cb_file, userData);
+	User::logCallback.Set(nst_cb_log, userData);
+	User::eventCallback.Set(nst_cb_event, userData);
+	
+	// Initialize and load FDS BIOS and NstDatabase.xml
+	nstdb = NULL;
+	fdsbios = NULL;
+	nst_load_db();
+	nst_load_fds_bios();
+    //
 	// Load a rom from the command line
 	if (argc > 1) {
 		#ifdef _GTK // This is a dirty hack
@@ -1077,8 +1079,10 @@ int main(int argc, char *argv[]) {
 				else { 
                     //char file_name[64];
                     //sprintf(file_name, "/home/casey/dev/emulators/data/%d.png", accumulator);
-                    //video_screenshot(file_name);
+                    //video_screenshot("temp");
                     //accumulator ++;
+                    write(newsockfd, videoStream.pixels, 512 * 448 * 4);
+                    //printf("%d, %d", rendersize.w, rendersize.h);
                     emulator.Execute(NULL, cNstSound, cNstPads); 
                 }
 			}
