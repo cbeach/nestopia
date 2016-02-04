@@ -120,7 +120,13 @@ static bool NST_CALLBACK VideoLock(void* userData, Video::Output& video) {
 
 // called right after Nestopia has finished writing pixels (not called if previous lock failed)
 static void NST_CALLBACK VideoUnlock(void* userData, Video::Output& video) {
-    videoStream = &video;
+    videoStream = video;
+    printf("%d\n", reinterpret_cast<int*>(video.pixels)[0]);
+    printf("%d\n", reinterpret_cast<int*>(video.pixels)[1]);
+    printf("%d\n", reinterpret_cast<int*>(video.pixels)[2]);
+    printf("%d\n", reinterpret_cast<int*>(video.pixels)[3]);
+    printf("%d\n", reinterpret_cast<int*>(video.pixels)[4]);
+    printf("%d\n", reinterpret_cast<int*>(video.pixels)[5]);
 	video_unlock_screen(video.pixels);
 }
 
