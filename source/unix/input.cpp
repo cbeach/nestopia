@@ -20,6 +20,8 @@
  * 
  */
 
+#include <bitset>
+#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -423,6 +425,208 @@ void input_match_joystick(Input::Controllers *controllers, SDL_Event event) {
 	
 	input_inject(controllers, reverseinput);
 	input_inject(controllers, input);
+}
+
+void unpack_networkinput(uint64_t encoded_input, networkinput_t* input) {
+    uint64_t player = 0xFF;
+    uint64_t up = 35;
+    uint64_t down = 34;
+    uint64_t left = 33;
+    uint64_t right = 32;
+    uint64_t select = 31;
+    uint64_t start = 30;
+    uint64_t a = 29;
+    uint64_t b = 28;
+    uint64_t turbo_a = 27;
+    uint64_t turbo_b = 26;
+    uint64_t altspeed = 25;
+    uint64_t insertcoin1 = 24;
+    uint64_t insertcoin2 = 23;
+    uint64_t fdsflip = 22;
+    uint64_t fdsswitch = 21;
+    uint64_t qsave1 = 20;
+    uint64_t qsave2 = 19;
+    uint64_t qload1 = 18;
+    uint64_t qload2 = 17;
+    uint64_t screenshot = 16;
+    uint64_t reset = 15;
+    uint64_t rwstart = 14;
+    uint64_t rwstop = 13;
+    uint64_t fullscreen = 12;
+    uint64_t video_filter = 11;
+    uint64_t scalefactor = 10;
+    uint64_t quit = 9;
+
+    input->player = encoded_input & player;
+    input->u = (encoded_input >> up) & 1lu;
+    input->d = (encoded_input >> down) & 1lu;
+    input->l = (encoded_input >> left) & 1lu;
+    input->r = (encoded_input >> right) & 1lu;
+    input->select = (encoded_input >> select) & 1lu;
+    input->start = (encoded_input >> start) & 1lu;
+    input->a = (encoded_input >> a) & 1lu;
+    input->b = (encoded_input >> b) & 1lu;
+    input->ta = (encoded_input >> turbo_a) & 1lu;
+    input->tb = (encoded_input >> turbo_b) & 1lu;
+    input->altspeed = (encoded_input >> altspeed) & 1lu;
+    input->insertcoin1 = (encoded_input >> insertcoin1) & 1lu;
+    input->insertcoin2 = (encoded_input >> insertcoin2) & 1lu;
+    input->fdsflip = (encoded_input >> fdsflip) & 1lu;
+    input->fdsswitch = (encoded_input >> fdsswitch) & 1lu;
+    input->qsave1 = (encoded_input >> qsave1) & 1lu;
+    input->qsave2 = (encoded_input >> qsave2) & 1lu;
+    input->qload1 = (encoded_input >> qload1) & 1lu;
+    input->qload2 = (encoded_input >> qload2) & 1lu;
+    input->screenshot = (encoded_input >> screenshot) & 1lu;
+    input->reset = (encoded_input >> reset) & 1lu;
+    input->rwstart = (encoded_input >> rwstart) & 1lu;
+    input->rwstop = (encoded_input >> rwstop) & 1lu;
+    input->fullscreen = (encoded_input >> fullscreen) & 1lu;
+    input->filter = (encoded_input >> video_filter) & 1lu;
+    input->scalefactor = (encoded_input >> scalefactor) & 1lu;
+    input->quit = (encoded_input >> quit) & 1lu;
+}
+
+void input_match_network(Input::Controllers *controllers, networkinput_t input) {
+	// Match NES buttons to keyboard buttons
+
+	nesinput_t nesinput;
+
+	nesinput.nescode = 0x00;
+	nesinput.player = 0;
+	nesinput.pressed = 0;
+	nesinput.turboa = 0;
+	nesinput.turbob = 0;
+
+
+    if (input.u) {
+        nesinput.pressed = 1;
+        nesinput.nescode = Input::Controllers::Pad::UP;
+        nesinput.player = input.player;
+        input_inject(controllers, nesinput);
+    }
+    if (input.d) {
+        nesinput.pressed = 1;
+        nesinput.nescode = Input::Controllers::Pad::DOWN;
+        nesinput.player = input.player;
+        input_inject(controllers, nesinput);
+    }
+    if (input.l) {
+        nesinput.pressed = 1;
+        nesinput.nescode = Input::Controllers::Pad::LEFT;
+        nesinput.player = input.player;
+        input_inject(controllers, nesinput);
+    }
+    if (input.r) {
+        nesinput.pressed = 1;
+        nesinput.nescode = Input::Controllers::Pad::RIGHT;
+        nesinput.player = input.player;
+        input_inject(controllers, nesinput);
+    }
+    if (input.select) {
+        nesinput.pressed = 1;
+        nesinput.nescode = Input::Controllers::Pad::SELECT;
+        nesinput.player = input.player;
+        input_inject(controllers, nesinput);
+    }
+    if (input.start) {
+        nesinput.pressed = 1;
+        nesinput.nescode = Input::Controllers::Pad::START;
+        nesinput.player = input.player;
+        input_inject(controllers, nesinput);
+    }
+    if (input.a) {
+        nesinput.pressed = 1;
+        nesinput.nescode = Input::Controllers::Pad::A;
+        nesinput.player = input.player;
+        input_inject(controllers, nesinput);
+    }
+    if (input.b) {
+        nesinput.pressed = 1;
+        nesinput.nescode = Input::Controllers::Pad::B;
+        nesinput.player = input.player;
+        input_inject(controllers, nesinput);
+    }
+    if (input.ta) {
+        nesinput.pressed = 1;
+        nesinput.nescode = Input::Controllers::Pad::A;
+        nesinput.player = input.player;
+        nesinput.turboa = 1;
+        input_inject(controllers, nesinput);
+        nesinput.turboa = 0;
+    }
+    if (input.tb) {
+        nesinput.pressed = 1;
+        nesinput.nescode = Input::Controllers::Pad::B;
+        nesinput.player = input.player;
+        nesinput.turbob = 1;
+        input_inject(controllers, nesinput);
+        nesinput.turbob = 0;
+    }
+    if (nesinput.pressed == 0) {
+        input_inject(controllers, nesinput);
+    }
+	
+	if (input.altspeed) { timing_set_altspeed(); }
+    else { timing_set_default(); }
+	
+	// Insert Coins
+	controllers->vsSystem.insertCoin = 0;
+	if (input.insertcoin1) { controllers->vsSystem.insertCoin |= Input::Controllers::VsSystem::COIN_1; }
+	if (input.insertcoin2) { controllers->vsSystem.insertCoin |= Input::Controllers::VsSystem::COIN_2; }
+	
+	// Process non-game events
+	if (input.fdsflip) { nst_flip_disk(); }
+	if (input.fdsswitch) { nst_switch_disk(); }
+	if (input.qsave1) { nst_state_quicksave(0); }
+	if (input.qsave2) { nst_state_quicksave(1); }
+	if (input.qload1) { nst_state_quickload(0); }
+	if (input.qload2) { nst_state_quickload(1); }
+	
+	// Screenshot
+	if (input.screenshot) { video_screenshot(NULL); }
+	
+	// Reset
+	if (input.reset) { nst_reset(0); }
+	
+	// Rewinder
+	if (input.rwstart) { nst_set_rewind(0); }
+	if (input.rwstop) { nst_set_rewind(1); }
+	
+	// Video
+	if (input.fullscreen) { video_toggle_fullscreen(); }
+	if (input.filter) { video_toggle_filter(); }
+	if (input.scalefactor) { video_toggle_scalefactor(); }
+	
+	// NSF
+	if (nst_nsf) {
+		Nsf nsf(emulator);
+		
+		if (input.u) {
+			nsf.PlaySong();
+			video_clear_buffer();
+			video_disp_nsf();
+		}
+		if (input.d) {
+			//nsf.StopSong();
+		}
+		if (input.l) {
+			nsf.SelectPrevSong();
+			video_clear_buffer();
+			video_disp_nsf();
+		}
+		if (input.r) {
+			nsf.SelectNextSong();
+			video_clear_buffer();
+			video_disp_nsf();
+		}
+	}
+	
+	// Escape exits when not in GUI mode
+	if (input.quit) {
+		if (conf.misc_disable_gui) { nst_schedule_quit(); }
+	}
+
 }
 
 void input_match_keyboard(Input::Controllers *controllers, SDL_Event event) {

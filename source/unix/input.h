@@ -63,6 +63,42 @@ typedef struct {
 } gamepad_t;
 
 typedef struct {
+	unsigned char player;
+    unsigned int u:1;
+    unsigned int d:1;
+    unsigned int l:1;
+    unsigned int r:1;
+    unsigned int select:1;
+    unsigned int start:1;
+    unsigned int a:1;
+    unsigned int b:1;
+    unsigned int ta:1;
+    unsigned int tb:1;
+    unsigned int altspeed:1;
+    unsigned int insertcoin1:1;
+    unsigned int insertcoin2:1;
+    unsigned int fdsflip:1;
+    unsigned int fdsswitch:1;
+    unsigned int qsave1:1;
+    unsigned int qsave2:1;
+    unsigned int qload1:1;
+    unsigned int qload2:1;
+	unsigned int screenshot:1;
+	unsigned int reset:1;
+	unsigned int rwstart:1;
+	unsigned int rwstop:1;
+	unsigned int fullscreen:1;
+	unsigned int filter:1;
+	unsigned int scalefactor:1;
+    unsigned int quit:1;
+} networkinput_t;
+
+union long_networkinput {
+    long as_long;
+    networkinput_t networkinput;
+};
+
+typedef struct {
 	// User Interface
 	char *qsave1;
 	char *qsave2;
@@ -169,5 +205,7 @@ static int input_config_match(void* user, const char* section, const char* name,
 
 int input_configure_item(int pnum, int bnum, int type);
 void input_set_item(SDL_Event event, int type, int pnum, int counter);
+
+void unpack_networkinput(uint64_t, networkinput_t*);
 
 #endif

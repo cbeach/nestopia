@@ -21,6 +21,9 @@
  * 
  */
 
+#define NETWORK_MODE true
+
+#include <bitset>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -105,7 +108,6 @@ extern char textbuf[32];
 
 extern bool drawtime;
 extern char timebuf[6];
-
 Video::Output videoStream;
 
 // *******************
@@ -121,12 +123,6 @@ static bool NST_CALLBACK VideoLock(void* userData, Video::Output& video) {
 // called right after Nestopia has finished writing pixels (not called if previous lock failed)
 static void NST_CALLBACK VideoUnlock(void* userData, Video::Output& video) {
     videoStream = video;
-    printf("%d\n", reinterpret_cast<int*>(video.pixels)[0]);
-    printf("%d\n", reinterpret_cast<int*>(video.pixels)[1]);
-    printf("%d\n", reinterpret_cast<int*>(video.pixels)[2]);
-    printf("%d\n", reinterpret_cast<int*>(video.pixels)[3]);
-    printf("%d\n", reinterpret_cast<int*>(video.pixels)[4]);
-    printf("%d\n", reinterpret_cast<int*>(video.pixels)[5]);
 	video_unlock_screen(video.pixels);
 }
 
@@ -899,6 +895,7 @@ void nst_load(const char *filename) {
 }
 
 int main(int argc, char *argv[]) {
+    #ifdef NETWORK_MODE
     int sockfd = 0;
     int newsockfd = 0;
     socklen_t clilen = 0;
@@ -951,6 +948,7 @@ int main(int argc, char *argv[]) {
             break;
         }
     } /* end of while */
+    #endif
     
 	// This is the main function
 	
@@ -1019,7 +1017,7 @@ int main(int argc, char *argv[]) {
 	fdsbios = NULL;
 	nst_load_db();
 	nst_load_fds_bios();
-    //
+
 	// Load a rom from the command line
 	if (argc > 1) {
 		#ifdef _GTK // This is a dirty hack
@@ -1042,11 +1040,25 @@ int main(int argc, char *argv[]) {
 		}
 		#endif
 	}
-
+	
 	// Start the main loop
 	nst_quit = 0;
 	
+    int frame_count = 0;
 	while (!nst_quit) {
+        #if NETWORK_MODE == true
+        long_networkinput* client_input = new long_networkinput();
+        uint64_t encoded_input = 0;
+        read(newsockfd, &encoded_input, sizeof(*client_input));
+        unpack_networkinput(encoded_input, &(client_input->networkinput));
+        #endif
+
+		#ifdef _GTK
+		while (gtk_events_pending()) {
+			gtk_main_iteration_do(TRUE);
+		}
+		if (!playing) { gtk_main_iteration_do(TRUE); }
+		#endif
 		if (playing) {
 			while (SDL_PollEvent(&event)) {
 				switch (event.type) {
@@ -1083,16 +1095,14 @@ int main(int argc, char *argv[]) {
 					emulator.Execute(NULL, cNstSound, cNstPads);
 				}
 				else { 
-                    //char file_name[64];
-                    //sprintf(file_name, "/home/casey/dev/emulators/data/%d.png", accumulator);
-                    //video_screenshot("temp");
-                    //accumulator ++;
-                    write(newsockfd, videoStream.pixels, 512 * 448 * 4);
-                    //printf("%d, %d", rendersize.w, rendersize.h);
-                    emulator.Execute(NULL, cNstSound, cNstPads); 
+                    emulator.Execute(cNstVideo, cNstSound, cNstPads); 
                 }
+                #if NETWORK_MODE == true
+                write(newsockfd, videoStream.pixels, 512 * 448 * 4);
+                #endif
 			}
 		}
+        delete client_input;
 	}
 	
 	// Remove the cartridge and shut down the NES
