@@ -116,11 +116,22 @@ class EmulatorClient:
 if __name__ == '__main__':
     client = EmulatorClient()
     frame_count = 0
+    control_sequence = [(175, 10, 'start')]
+    countdown = 0
+    current_control_sequence = None
     while True:
-        frame = client.next_frame(encode_input(player=2, down=True))
+        if current_control_sequence is None:
+            current_control_sequence = control_sequence.pop(0)
+        if current_control_sequence[0] == frame_count:
+            countdown = current_control_sequence[1]
+        if countdown > 0:
+            countdown -= 1
+            frame = client.next_frame(encode_input(**current_control_sequence[2]))
+        else:
+            frame = client.next_frame(encode_input())
+
         frame_count += 1
-        if frame_count % 100 == 0:
-            print(frame_count)
+        print(frame_count)
 
 
 
