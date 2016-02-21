@@ -6,6 +6,7 @@
 #define TOTALBUTTONS (NUMGAMEPADS*NUMBUTTONS)
 #define DEADZONE (32768/3)
 
+#include <boost/property_tree/ptree.hpp>
 #include <SDL.h>
 #include "core/api/NstApiInput.hpp"
 #include "core/api/NstApiVideo.hpp"
@@ -206,6 +207,6 @@ static int input_config_match(void* user, const char* section, const char* name,
 int input_configure_item(int pnum, int bnum, int type);
 void input_set_item(SDL_Event event, int type, int pnum, int counter);
 
-void unpack_networkinput(uint64_t, networkinput_t*);
+void input_match_network(Input::Controllers*, boost::property_tree::ptree);
 
 #endif

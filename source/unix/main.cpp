@@ -23,10 +23,17 @@
 
 #define NETWORK_MODE true
 
-#include <bitset>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/foreach.hpp>
+#include <cassert>
+#include <exception>
+#include <sstream>
+#include <string>
 #include <iostream>
 #include <fstream>
 #include <sstream>
+
 #include <iomanip>
 #include <vector>
 #include <sys/stat.h>
@@ -903,9 +910,6 @@ int main(int argc, char *argv[]) {
     struct sockaddr_in serv_addr, cli_addr;
     int  n, pid;
 
-    // 1 MB
-    char buffer[1048576];
-    
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
         perror("Error opening socket");
@@ -949,7 +953,7 @@ int main(int argc, char *argv[]) {
         }
     } /* end of while */
     #endif
-    
+
 	// This is the main function
 	
 	static SDL_Event event;
@@ -1040,18 +1044,19 @@ int main(int argc, char *argv[]) {
 		}
 		#endif
 	}
+
+    std::cout << "width: " << Video::Output::WIDTH << std::endl;
+    std::cout << "height: " << Video::Output::HEIGHT << std::endl;
+    std::cout << "scale: " << conf.video_scale_factor << std::endl;
 	
 	// Start the main loop
 	nst_quit = 0;
 	
     int frame_count = 0;
+    char buffer[2048];
 	while (!nst_quit) {
-        #if NETWORK_MODE == true
-        long_networkinput* client_input = new long_networkinput();
-        uint64_t encoded_input = 0;
-        read(newsockfd, &encoded_input, sizeof(*client_input));
-        unpack_networkinput(encoded_input, &(client_input->networkinput));
-        #endif
+        frame_count ++;
+        std::cout << std::endl << "frame: " << frame_count << std::endl;
 
 		#ifdef _GTK
 		while (gtk_events_pending()) {
@@ -1059,7 +1064,24 @@ int main(int argc, char *argv[]) {
 		}
 		if (!playing) { gtk_main_iteration_do(TRUE); }
 		#endif
+
+        std::cout << "\tController pad location 1: " << cNstPads->pad[0].buttons << std::endl;
 		if (playing) {
+            memset(buffer, 0, 2048);
+            #ifdef NETWORK_MODE
+            int input_length = read(newsockfd, buffer, sizeof(char) * 2048);
+            std::cout << "\tbuffer: " << buffer << std::endl;
+            std::stringstream ss;
+            ss << std::string(buffer);
+            boost::property_tree::ptree tree;
+            try {
+                boost::property_tree::read_json(ss, tree);
+            } catch (boost::property_tree::json_parser::json_parser_error) {
+                
+            }
+            input_match_network(cNstPads, tree);
+            std::cout << "\tController pad location 2: " << cNstPads->pad[0].buttons << std::endl;
+            #else
 			while (SDL_PollEvent(&event)) {
 				switch (event.type) {
 					case SDL_QUIT:
@@ -1067,18 +1089,27 @@ int main(int argc, char *argv[]) {
 						break;
 					
 					case SDL_KEYDOWN:
+                        std::cout << "\tSDL_KEYDOWN" << std::endl;
+						input_process(cNstPads, event);
+						break;
 					case SDL_KEYUP:
+                        std::cout << "\tSDL_KEYUP" << std::endl;
+						input_process(cNstPads, event);
+						break;
 					case SDL_JOYHATMOTION:
 					case SDL_JOYAXISMOTION:
 					case SDL_JOYBUTTONDOWN:
 					case SDL_JOYBUTTONUP:
 					case SDL_MOUSEBUTTONDOWN:
 					case SDL_MOUSEBUTTONUP:
+                        std::cout << "\tSome other SDL event" << std::endl;
 						input_process(cNstPads, event);
 						break;
 					default: break;
 				}	
 			}
+            #endif
+            std::cout << "\tController pad location 3: " << cNstPads->pad[0].buttons << std::endl;
 			
 			if (NES_SUCCEEDED(Rewinder(emulator).Enable(true))) {
 				Rewinder(emulator).EnableSound(true);
@@ -1097,12 +1128,16 @@ int main(int argc, char *argv[]) {
 				else { 
                     emulator.Execute(cNstVideo, cNstSound, cNstPads); 
                 }
-                #if NETWORK_MODE == true
-                write(newsockfd, videoStream.pixels, 512 * 448 * 4);
+                #ifdef NETWORK_MODE
+                int video_scalefactor = conf.video_scale_factor;
+                int frame_width = Video::Output::WIDTH * video_scalefactor;
+                int frame_height = Video::Output::HEIGHT * video_scalefactor;
+                std::cout << "\tframe size: " << frame_height * frame_width * 4 << std::endl;
+                write(newsockfd, videoStream.pixels, frame_height * frame_width * 4);
                 #endif
 			}
 		}
-        delete client_input;
+        //delete client_input;
 	}
 	
 	// Remove the cartridge and shut down the NES
