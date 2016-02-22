@@ -304,7 +304,7 @@ void video_create() {
 	}
 	#else
 	video_create_standalone();
-	glcontext = SDL_GL_CreateContext(sdlwindow);
+	//glcontext = SDL_GL_CreateContext(sdlwindow);
 	#endif
 	
 	if(glcontext == NULL) {

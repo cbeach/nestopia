@@ -19,7 +19,7 @@
  * MA 02110-1301, USA.
  * 
  */
-
+#undef _GTK
 #include <boost/foreach.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/property_tree/json_parser.hpp>

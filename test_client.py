@@ -2,15 +2,23 @@
 import inspect
 import json
 import socket
+import sys
 import time
 
 #from matplotlib import pyplot as plt
 #from termcolor import cprint
-#import cv2
+import cv2
 import numpy as np
 
-
+MB = 2 ** 20
 port = 9090
+
+
+def show_image(image):
+    cv2.imshow('image', image)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        sys.exit(0)
+    #cv2.destroyAllWindows()
 
 
 def encode_input(player=0, up=False, down=False, left=False, right=False, select=False,
@@ -38,27 +46,41 @@ def encode_input(player=0, up=False, down=False, left=False, right=False, select
 
 
 class EmulatorClient:
-    def __init__(self, rom_file='/home/mcsmash/dev/nestopia/smb.nes'):
+    def __init__(self, rom_file):
         self.sock = socket.socket()         # Create a socket object
         self.host = socket.gethostname()  # Get local machine name
         self.sock.connect((self.host, port))
-        self.sock.send(rom_file);
+        self.sock.send(json.dumps({
+            'rom_file': rom_file
+        }))
+        response = json.loads(self.sock.recv(MB))
+        width = int(response['width'])
+        height = int(response['height'])
+        scale = int(response['scale'])
+        self.scale = scale
+        self.width = width * scale
+        self.height = height * scale
+        self.depth = 4
+        self.pixels = []
+        self.non_black_frame_received = False
 
-    def next_frame(self, packed_input, width=256, height=240, depth=4):
+    def next_frame(self, packed_input):
         self.sock.send(packed_input)
-        while(len(self.pixels) < width * height * depth):
-            chunk = self.sock.recv(width * height * depth)
+        while(len(self.pixels) < self.width * self.height * self.depth):
+            chunk = self.sock.recv(self.width * self.height * self.depth)
             self.pixels.extend([ord(i) for i in chunk])
 
-        ret_val = np.array(self.pixels[0:width * height * depth])\
-            .reshape((width, height, depth)).astype('int8')
-        self.pixels = self.pixels[width * height * depth:]
+        ret_val = np.array(self.pixels[0:self.width * self.height * self.depth])\
+            .reshape((self.height, self.width, self.depth)).astype('uint8')
+        self.pixels = self.pixels[self.width * self.height * self.depth:]
+        self.non_black_frame_received = np.any(ret_val)
         return ret_val
 
 
 if __name__ == '__main__':
     start_time = time.time()
-    client = EmulatorClient()
+    rom = '/home/mcsmash/dev/nestopia/smb.nes'
+    client = EmulatorClient(rom)
     frame_count = 0
     control_sequence = []
     control_sequence.append(
@@ -92,8 +114,8 @@ if __name__ == '__main__':
                 try:
                     current_control_sequence = control_sequence.pop(0)
                 except(IndexError):
-                    print('No more control sequences')
+                    pass
             frame = client.next_frame(encode_input())
+        show_image(frame)
         frame_count += 1
-        print('frame: {} ({}/sec)'.format(frame_count, frame_count / (time.time() - start_time)))
-        print
+        print('frames/sec: {}'.format(frame_count / (time.time() - start_time)))

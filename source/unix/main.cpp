@@ -21,7 +21,11 @@
  * 
  */
 
-#define NETWORK_MODE true
+#define NETWORK_MODE
+#define HEADLESS
+#ifdef HEADLESS
+#undef _GTK
+#endif
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -81,6 +85,8 @@
 #endif
 
 using namespace Nes::Api;
+
+const int MB = 1048576;
 
 // base class, all interfaces derives from this
 Emulator emulator;
@@ -928,6 +934,8 @@ int main(int argc, char *argv[]) {
         perror("ERROR on binding");
         exit(1);
     }
+    // 1 MB
+    char buffer[MB];
 
     while (1) {
         /* Now start listening for the clients, here
@@ -969,6 +977,7 @@ int main(int argc, char *argv[]) {
 	config_file_read();
 	
 	// Exit if there is no CLI argument
+    #ifndef HEADLESS
 	#ifdef _GTK
 	if (argc == 1 && conf.misc_disable_gui) {
 	#else
@@ -977,15 +986,18 @@ int main(int argc, char *argv[]) {
 		cli_show_usage();
 		return 0;
 	}
+	cli_handle_command(argc, argv);
+    #endif
 	
 	// Handle command line arguments
-	cli_handle_command(argc, argv);
 	
+    #ifndef HEADLESS
 	// Initialize SDL
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0) {
 		fprintf(stderr, "Couldn't initialize SDL: %s\n", SDL_GetError());
 		return 1;
 	}
+    #endif
 	
 	// Detect Joysticks
 	input_joysticks_detect();
@@ -1003,7 +1015,9 @@ int main(int argc, char *argv[]) {
 	#ifdef _GTK
 	if (!conf.misc_disable_gui) { gtkui_init(argc, argv); }
 	#endif
+    #ifndef HEADLESS
 	video_create();
+    #endif
 	
 	// Set up the callbacks
 	Video::Output::lockCallback.Set(VideoLock, userData);
@@ -1023,6 +1037,63 @@ int main(int argc, char *argv[]) {
 	nst_load_fds_bios();
 
 	// Load a rom from the command line
+    #ifdef NETWORK_MODE
+    int input_length = read(newsockfd, buffer, sizeof(char) * MB);
+
+    std::stringstream rom_stream;
+    rom_stream << std::string(buffer);
+    boost::property_tree::ptree init_request;
+    try {
+        boost::property_tree::read_json(rom_stream, init_request);
+    } catch (boost::property_tree::json_parser::json_parser_error) {
+        std::cout << "Could not read json string: " << buffer << std::endl;    
+    }
+    std::string rom_file = init_request.get_child("rom_file").get_value<std::string>();
+    std::cout << "Rom File: " << rom_file << std::endl;
+    #ifdef _GTK // This is a dirty hack
+    if (conf.misc_disable_gui) {
+        nst_load(rom_file.c_str());
+
+    } else {
+        if (strcmp(argv[argc - 1], "-e")) { 
+            nst_load(rom_file.c_str()); 
+        }
+    }
+
+    if (loaded) {
+        boost::property_tree::ptree init_response;
+
+        init_response.put("scale", conf.video_scale_factor);
+        init_response.put("width", Video::Output::WIDTH);
+        init_response.put("height", Video::Output::HEIGHT);
+
+        std::ostringstream response_stream;
+        boost::property_tree::write_json(response_stream, init_response);  
+        std::string response_string = response_stream.str();
+        write(newsockfd, response_string.c_str(), response_string.size());
+    } else {
+        fprintf(stderr, "Fatal: Could not load ROM\n");
+        exit(1);
+    }
+    #else
+    conf.misc_disable_gui = true;
+    nst_load(rom_file.c_str());
+    if (loaded) {
+        boost::property_tree::ptree init_response;
+
+        init_response.put("scale", conf.video_scale_factor);
+        init_response.put("width", Video::Output::WIDTH);
+        init_response.put("height", Video::Output::HEIGHT);
+        std::ostringstream response_stream;
+        boost::property_tree::write_json(response_stream, init_response);  
+        std::string response_string = response_stream.str();
+        write(newsockfd, response_string.c_str(), response_string.size());
+    } else {
+        fprintf(stderr, "Fatal: Could not load ROM\n");
+        exit(1);
+    }
+    #endif
+    #else
 	if (argc > 1) {
 		#ifdef _GTK // This is a dirty hack
 		if (conf.misc_disable_gui) {
@@ -1044,19 +1115,13 @@ int main(int argc, char *argv[]) {
 		}
 		#endif
 	}
-
-    std::cout << "width: " << Video::Output::WIDTH << std::endl;
-    std::cout << "height: " << Video::Output::HEIGHT << std::endl;
-    std::cout << "scale: " << conf.video_scale_factor << std::endl;
-	
+    #endif
 	// Start the main loop
 	nst_quit = 0;
 	
     int frame_count = 0;
-    char buffer[2048];
 	while (!nst_quit) {
         frame_count ++;
-        std::cout << std::endl << "frame: " << frame_count << std::endl;
 
 		#ifdef _GTK
 		while (gtk_events_pending()) {
@@ -1065,51 +1130,40 @@ int main(int argc, char *argv[]) {
 		if (!playing) { gtk_main_iteration_do(TRUE); }
 		#endif
 
-        std::cout << "\tController pad location 1: " << cNstPads->pad[0].buttons << std::endl;
 		if (playing) {
-            memset(buffer, 0, 2048);
+            memset(buffer, 0, input_length);
             #ifdef NETWORK_MODE
-            int input_length = read(newsockfd, buffer, sizeof(char) * 2048);
-            std::cout << "\tbuffer: " << buffer << std::endl;
+            input_length = read(newsockfd, buffer, sizeof(char) * MB);
+            std::cout << "control buffer: " << buffer << std::endl;
             std::stringstream ss;
             ss << std::string(buffer);
             boost::property_tree::ptree tree;
             try {
                 boost::property_tree::read_json(ss, tree);
             } catch (boost::property_tree::json_parser::json_parser_error) {
-                
+                std::cout << "Could not read json string: " << buffer << std::endl;    
             }
             input_match_network(cNstPads, tree);
-            std::cout << "\tController pad location 2: " << cNstPads->pad[0].buttons << std::endl;
             #else
 			while (SDL_PollEvent(&event)) {
 				switch (event.type) {
 					case SDL_QUIT:
 						nst_quit = 1;
 						break;
-					
 					case SDL_KEYDOWN:
-                        std::cout << "\tSDL_KEYDOWN" << std::endl;
-						input_process(cNstPads, event);
-						break;
 					case SDL_KEYUP:
-                        std::cout << "\tSDL_KEYUP" << std::endl;
-						input_process(cNstPads, event);
-						break;
 					case SDL_JOYHATMOTION:
 					case SDL_JOYAXISMOTION:
 					case SDL_JOYBUTTONDOWN:
 					case SDL_JOYBUTTONUP:
 					case SDL_MOUSEBUTTONDOWN:
 					case SDL_MOUSEBUTTONUP:
-                        std::cout << "\tSome other SDL event" << std::endl;
 						input_process(cNstPads, event);
 						break;
 					default: break;
 				}	
 			}
             #endif
-            std::cout << "\tController pad location 3: " << cNstPads->pad[0].buttons << std::endl;
 			
 			if (NES_SUCCEEDED(Rewinder(emulator).Enable(true))) {
 				Rewinder(emulator).EnableSound(true);
@@ -1123,21 +1177,28 @@ int main(int argc, char *argv[]) {
 				
 				// Execute a frame
 				if (timing_frameskip()) {
-					emulator.Execute(NULL, cNstSound, cNstPads);
+					emulator.Execute(NULL, NULL, cNstPads);
 				}
-				else { 
-                    emulator.Execute(cNstVideo, cNstSound, cNstPads); 
+				else {
+                    emulator.Execute(cNstVideo, NULL, cNstPads); 
+                    //emulator.Execute(NULL, NULL, cNstPads); 
                 }
                 #ifdef NETWORK_MODE
                 int video_scalefactor = conf.video_scale_factor;
                 int frame_width = Video::Output::WIDTH * video_scalefactor;
                 int frame_height = Video::Output::HEIGHT * video_scalefactor;
-                std::cout << "\tframe size: " << frame_height * frame_width * 4 << std::endl;
-                write(newsockfd, videoStream.pixels, frame_height * frame_width * 4);
+                std::cout << "writing frame data" << std::endl;
+                int data_sent = write(newsockfd, videoStream.pixels, frame_height * frame_width * 4);
+                if (data_sent > 0) {
+                    std::cout << "done writing frame data " << data_sent << " bytes sent" << std::endl << std::endl;
+                } else {
+                    std::cout << "error writing frame data errno: " << errno << std::endl << std::endl;
+                }
+
+                //write(newsockfd, "Hello", 6);
                 #endif
 			}
 		}
-        //delete client_input;
 	}
 	
 	// Remove the cartridge and shut down the NES
