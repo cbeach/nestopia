@@ -61,20 +61,15 @@ class EmulatorClient:
         self.width = width * scale
         self.height = height * scale
         self.depth = 4
-        self.pixels = []
+        self.frame = np.empty((self.height, self.width, self.depth), dtype=np.uint8)
         self.non_black_frame_received = False
+        self.frame_size = self.height * self.width * self.depth
 
     def next_frame(self, packed_input):
         self.sock.send(packed_input)
-        while(len(self.pixels) < self.width * self.height * self.depth):
-            chunk = self.sock.recv(self.width * self.height * self.depth)
-            self.pixels.extend([ord(i) for i in chunk])
-
-        ret_val = np.array(self.pixels[0:self.width * self.height * self.depth])\
-            .reshape((self.height, self.width, self.depth)).astype('uint8')
-        self.pixels = self.pixels[self.width * self.height * self.depth:]
-        self.non_black_frame_received = np.any(ret_val)
-        return ret_val
+        self.sock.recv_into(self.frame, self.frame_size, socket.MSG_WAITALL)
+        if np.any(self.frame):
+            print('non-empty frame :D')
 
 
 if __name__ == '__main__':
@@ -105,7 +100,6 @@ if __name__ == '__main__':
             current_control_sequence = control_sequence.pop(0)
         if current_control_sequence[0] == frame_count:
             countdown = current_control_sequence[1]
-
         if countdown > 0:
             countdown -= 1
             frame = client.next_frame(encode_input(**current_control_sequence[2]))
@@ -116,6 +110,6 @@ if __name__ == '__main__':
                 except(IndexError):
                     pass
             frame = client.next_frame(encode_input())
-        show_image(frame)
+        #show_image(frame)
         frame_count += 1
         print('frames/sec: {}'.format(frame_count / (time.time() - start_time)))

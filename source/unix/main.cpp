@@ -1176,13 +1176,14 @@ int main(int argc, char *argv[]) {
 				input_pulse_turbo(cNstPads);
 				
 				// Execute a frame
-				if (timing_frameskip()) {
-					emulator.Execute(NULL, NULL, cNstPads);
-				}
-				else {
-                    emulator.Execute(cNstVideo, NULL, cNstPads); 
-                    //emulator.Execute(NULL, NULL, cNstPads); 
-                }
+				//if (timing_frameskip()) {
+				//	emulator.Execute(NULL, NULL, cNstPads);
+				//}
+				//else {
+                //    emulator.Execute(cNstVideo, NULL, cNstPads); 
+                //    //emulator.Execute(NULL, NULL, cNstPads); 
+                //}
+                emulator.Execute(cNstVideo, NULL, cNstPads); 
                 #ifdef NETWORK_MODE
                 int video_scalefactor = conf.video_scale_factor;
                 int frame_width = Video::Output::WIDTH * video_scalefactor;
