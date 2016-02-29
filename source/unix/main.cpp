@@ -1046,10 +1046,10 @@ int main(int argc, char *argv[]) {
     try {
         boost::property_tree::read_json(rom_stream, init_request);
     } catch (boost::property_tree::json_parser::json_parser_error) {
-        std::cout << "Could not read json string: " << buffer << std::endl;    
+        std::cerr << "Could not read json string: " << buffer << std::endl;    
+        exit(1);
     }
     std::string rom_file = init_request.get_child("rom_file").get_value<std::string>();
-    std::cout << "Rom File: " << rom_file << std::endl;
     #ifdef _GTK // This is a dirty hack
     if (conf.misc_disable_gui) {
         nst_load(rom_file.c_str());
@@ -1134,14 +1134,14 @@ int main(int argc, char *argv[]) {
             memset(buffer, 0, input_length);
             #ifdef NETWORK_MODE
             input_length = read(newsockfd, buffer, sizeof(char) * MB);
-            std::cout << "control buffer: " << buffer << std::endl;
             std::stringstream ss;
             ss << std::string(buffer);
             boost::property_tree::ptree tree;
             try {
                 boost::property_tree::read_json(ss, tree);
             } catch (boost::property_tree::json_parser::json_parser_error) {
-                std::cout << "Could not read json string: " << buffer << std::endl;    
+                std::cerr << "Could not read json string: " << buffer << std::endl;
+                exit(1);
             }
             input_match_network(cNstPads, tree);
             #else
@@ -1172,31 +1172,24 @@ int main(int argc, char *argv[]) {
 			audio_play();
 			
 			if (updateok) {
-				// Pulse the turbo buttons
 				input_pulse_turbo(cNstPads);
 				
-				// Execute a frame
-				//if (timing_frameskip()) {
-				//	emulator.Execute(NULL, NULL, cNstPads);
-				//}
-				//else {
-                //    emulator.Execute(cNstVideo, NULL, cNstPads); 
-                //    //emulator.Execute(NULL, NULL, cNstPads); 
-                //}
+                #ifdef HEADLESS
                 emulator.Execute(cNstVideo, NULL, cNstPads); 
+                #else
+				// Execute a frame
+				if (timing_frameskip()) {
+					emulator.Execute(NULL, NULL, cNstPads);
+				}
+				else {
+                    emulator.Execute(cNstVideo, NULL, cNstPads); 
+                }
+                #endif
                 #ifdef NETWORK_MODE
                 int video_scalefactor = conf.video_scale_factor;
                 int frame_width = Video::Output::WIDTH * video_scalefactor;
                 int frame_height = Video::Output::HEIGHT * video_scalefactor;
-                std::cout << "writing frame data" << std::endl;
                 int data_sent = write(newsockfd, videoStream.pixels, frame_height * frame_width * 4);
-                if (data_sent > 0) {
-                    std::cout << "done writing frame data " << data_sent << " bytes sent" << std::endl << std::endl;
-                } else {
-                    std::cout << "error writing frame data errno: " << errno << std::endl << std::endl;
-                }
-
-                //write(newsockfd, "Hello", 6);
                 #endif
 			}
 		}

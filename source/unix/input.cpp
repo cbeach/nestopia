@@ -437,86 +437,71 @@ void input_match_joystick(Input::Controllers *controllers, SDL_Event event) {
 
 void input_match_network(Input::Controllers *controllers, boost::property_tree::ptree input) {
 	// Match NES buttons to keyboard buttons
-
 	nesinput_t nesinput;
 
     int player = 0;
     try {
         player = boost::lexical_cast<int>(input.get_child("player").get_value<std::string>());
     } catch( boost::bad_lexical_cast const& ) {
-        std::cout << "Error: player number string was not valid" << std::endl;
+        std::cerr << "Error: player number string was not valid" << std::endl;
+
     }
+
 	nesinput.nescode = 0x00;
     nesinput.player = player;
 	nesinput.pressed = 0;
 	nesinput.turboa = 0;
 	nesinput.turbob = 0;
-    
+
+    controllers->pad[nesinput.player].buttons = 0;
+    turbostate.p1a = false;
+    turbostate.p1b = false;
+    turbostate.p2a = false;
+    turbostate.p2b = false;    
+
     BOOST_FOREACH(boost::property_tree::ptree::value_type &i, input.get_child("controls")) {
         std::string input_string(i.second.data());
         if (input_string == "up") {
-            std::cout << "\tUp button pressed" << std::endl;
             nesinput.pressed = 1;
-            nesinput.nescode = Input::Controllers::Pad::UP;
-            input_inject(controllers, nesinput);
+            nesinput.nescode |= Input::Controllers::Pad::UP;
         }
         if (input_string == "down") {
-            std::cout << "\tDown button pressed" << std::endl;
             nesinput.pressed = 1;
-            nesinput.nescode = Input::Controllers::Pad::DOWN;
-            input_inject(controllers, nesinput);
+            nesinput.nescode |= Input::Controllers::Pad::DOWN;
         }
         if (input_string == "left") {
-            std::cout << "\tLeft button pressed" << std::endl;
             nesinput.pressed = 1;
-            nesinput.nescode = Input::Controllers::Pad::LEFT;
-            input_inject(controllers, nesinput);
+            nesinput.nescode |= Input::Controllers::Pad::LEFT;
         }
         if (input_string == "right") { // input.r
-            std::cout << "\tRight button pressed" << std::endl;
             nesinput.pressed = 1;
-            nesinput.nescode = Input::Controllers::Pad::RIGHT;
-            input_inject(controllers, nesinput);
+            nesinput.nescode |= Input::Controllers::Pad::RIGHT;
         }
         if (input_string == "select") { // input.select
-            std::cout << "\tSelect button pressed" << std::endl;
             nesinput.pressed = 1;
-            nesinput.nescode = Input::Controllers::Pad::SELECT;
-            input_inject(controllers, nesinput);
+            nesinput.nescode |= Input::Controllers::Pad::SELECT;
         }
         if (input_string == "start") { // input.start
-            std::cout << "\tStart button pressed" << std::endl;
             nesinput.pressed = 1;
-            nesinput.nescode = Input::Controllers::Pad::START;
-            input_inject(controllers, nesinput);
+            nesinput.nescode |= Input::Controllers::Pad::START;
         }
         if (input_string == "a") { // input.a
-            std::cout << "\tA button pressed" << std::endl;
             nesinput.pressed = 1;
-            nesinput.nescode = Input::Controllers::Pad::A;
-            input_inject(controllers, nesinput);
+            nesinput.nescode |= Input::Controllers::Pad::A;
         }
         if (input_string == "b") { // input.b
-            std::cout << "\tB button pressed" << std::endl;
             nesinput.pressed = 1;
-            nesinput.nescode = Input::Controllers::Pad::B;
-            input_inject(controllers, nesinput);
+            nesinput.nescode |= Input::Controllers::Pad::B;
         }
         if (input_string == "turbo_a") { // input.ta
-            std::cout << "\tTurbo A button pressed" << std::endl;
             nesinput.pressed = 1;
-            nesinput.nescode = Input::Controllers::Pad::A;
+            nesinput.nescode |= Input::Controllers::Pad::A;
             nesinput.turboa = 1;
-            input_inject(controllers, nesinput);
-            nesinput.turboa = 0;
         }
         if (input_string == "turbo_b") { // input.tb
-            std::cout << "\tTurbo B button pressed" << std::endl;
             nesinput.pressed = 1;
-            nesinput.nescode = Input::Controllers::Pad::B;
+            nesinput.nescode |= Input::Controllers::Pad::B;
             nesinput.turbob = 1;
-            input_inject(controllers, nesinput);
-            nesinput.turbob = 0;
         }
         if (input_string == "altspeed") { timing_set_altspeed(); }
         else { timing_set_default(); }
@@ -577,20 +562,15 @@ void input_match_network(Input::Controllers *controllers, boost::property_tree::
             }
         }
         
-        // Escape exits when not in GUI mode
         if (input_string == "quit") { 
             if (conf.misc_disable_gui) { nst_schedule_quit(); }
         }
     }
-    if (nesinput.pressed == 0) { // nesinput.pressed == 0
-        std::cout << "\t\tNo button was pressed" << std::endl;
-        std::cout << "\t\tnesinput.pressed" << nesinput.pressed <<std::endl;
-        std::cout << "\t\tnesinput.nescode" << nesinput.nescode <<std::endl;
-        nesinput.nescode = 0;
-        controllers->pad[player].buttons = 0;
-        input_inject(controllers, nesinput);
-    }
-        
+    //if (nesinput.pressed == 0) {
+    //    nesinput.nescode = 0;
+    //    controllers->pad[player].buttons = 0;
+    //}
+    input_inject(controllers, nesinput);
 }
 
 void input_match_keyboard(Input::Controllers *controllers, SDL_Event event) {
@@ -628,7 +608,6 @@ void input_match_keyboard(Input::Controllers *controllers, SDL_Event event) {
 			input.player = i;
 		}
 		else if (player[i].start == event.key.keysym.scancode) {
-            std::cout << "\tStart button pressed by player " << i << std::endl;
 			input.nescode = Input::Controllers::Pad::START;
 			input.player = i;
 		}
