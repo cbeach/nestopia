@@ -68,8 +68,7 @@ class EmulatorClient:
     def next_frame(self, packed_input):
         self.sock.send(packed_input)
         self.sock.recv_into(self.frame, self.frame_size, socket.MSG_WAITALL)
-        if np.any(self.frame):
-            print('non-empty frame :D')
+        return self.frame
 
 
 if __name__ == '__main__':
@@ -110,6 +109,6 @@ if __name__ == '__main__':
                 except(IndexError):
                     pass
             frame = client.next_frame(encode_input())
-        #show_image(frame)
+        show_image(frame)
         frame_count += 1
         print('frames/sec: {}'.format(frame_count / (time.time() - start_time)))

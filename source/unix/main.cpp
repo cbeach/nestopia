@@ -1131,20 +1131,20 @@ int main(int argc, char *argv[]) {
 		#endif
 
 		if (playing) {
-            memset(buffer, 0, input_length);
-            #ifdef NETWORK_MODE
-            input_length = read(newsockfd, buffer, sizeof(char) * MB);
-            std::stringstream ss;
-            ss << std::string(buffer);
-            boost::property_tree::ptree tree;
-            try {
-                boost::property_tree::read_json(ss, tree);
-            } catch (boost::property_tree::json_parser::json_parser_error) {
-                std::cerr << "Could not read json string: " << buffer << std::endl;
-                exit(1);
-            }
-            input_match_network(cNstPads, tree);
-            #else
+      memset(buffer, 0, input_length);
+      #ifdef NETWORK_MODE
+      input_length = read(newsockfd, buffer, sizeof(char) * MB);
+      std::stringstream ss;
+      ss << std::string(buffer);
+      boost::property_tree::ptree tree;
+      try {
+        boost::property_tree::read_json(ss, tree);
+      } catch (boost::property_tree::json_parser::json_parser_error) {
+        std::cerr << "Could not read json string: " << buffer << std::endl;
+        exit(1);
+      }
+      input_match_network(cNstPads, tree);
+      #else
 			while (SDL_PollEvent(&event)) {
 				switch (event.type) {
 					case SDL_QUIT:
@@ -1163,7 +1163,7 @@ int main(int argc, char *argv[]) {
 					default: break;
 				}	
 			}
-            #endif
+      #endif
 			
 			if (NES_SUCCEEDED(Rewinder(emulator).Enable(true))) {
 				Rewinder(emulator).EnableSound(true);
@@ -1173,24 +1173,26 @@ int main(int argc, char *argv[]) {
 			
 			if (updateok) {
 				input_pulse_turbo(cNstPads);
-				
-                #ifdef HEADLESS
-                emulator.Execute(cNstVideo, NULL, cNstPads); 
-                #else
+        #ifdef HEADLESS
+        emulator.Execute(cNstVideo, NULL, cNstPads); 
+        #else
 				// Execute a frame
 				if (timing_frameskip()) {
 					emulator.Execute(NULL, NULL, cNstPads);
 				}
 				else {
-                    emulator.Execute(cNstVideo, NULL, cNstPads); 
-                }
-                #endif
-                #ifdef NETWORK_MODE
-                int video_scalefactor = conf.video_scale_factor;
-                int frame_width = Video::Output::WIDTH * video_scalefactor;
-                int frame_height = Video::Output::HEIGHT * video_scalefactor;
-                int data_sent = write(newsockfd, videoStream.pixels, frame_height * frame_width * 4);
-                #endif
+          emulator.Execute(cNstVideo, NULL, cNstPads); 
+          }
+          #endif
+          #ifdef NETWORK_MODE
+          int video_scalefactor = conf.video_scale_factor;
+          int frame_width = Video::Output::WIDTH * video_scalefactor;
+          int frame_height = Video::Output::HEIGHT * video_scalefactor;
+          std::cout << "height: " << frame_height << std::endl;
+          std::cout << "width: " << frame_width << std::endl;
+          std::cout << "----------------------" << std::endl;
+          int data_sent = write(newsockfd, videoStream.pixels, frame_height * frame_width * 4);
+          #endif
 			}
 		}
 	}

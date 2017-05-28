@@ -137,7 +137,7 @@ void config_set_default() {
 	
 	// Video
 	conf.video_filter = 0;
-	conf.video_scale_factor = 2;
+	conf.video_scale_factor = 1;
 	conf.video_palette_mode = 0;
 	conf.video_decoder = 0;
 	conf.video_brightness = 0; // -100 to 100
@@ -172,8 +172,8 @@ void config_set_default() {
 	conf.audio_vol_s5b = 85;
 	
 	// Timing
-	conf.timing_speed = 60;
-	conf.timing_altspeed = 180;
+	conf.timing_speed = 6000;
+	conf.timing_altspeed = 18000;
 	conf.timing_turbopulse = 3;
 	conf.timing_vsync = true;
 	conf.timing_limiter = true;

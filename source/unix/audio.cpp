@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <iostream>
 
 #include "config.h"
 #include "audio.h"
@@ -201,7 +202,6 @@ void audio_adj_volume() {
 
 bool timing_frameskip() {
 	// Calculate whether to skip a frame or not
-	
 	if (conf.audio_api == 0) { // SDL
 		// Wait until the audio is drained
 		#if SDL_VERSION_ATLEAST(2,0,4)
