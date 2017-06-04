@@ -73,7 +73,7 @@ class EmulatorClient:
 
 if __name__ == '__main__':
     start_time = time.time()
-    rom = '/home/mcsmash/dev/nestopia/smb.nes'
+    rom = '/home/mcsmash/dev/emulators/nestopia/smb.nes'
     client = EmulatorClient(rom)
     frame_count = 0
     control_sequence = []

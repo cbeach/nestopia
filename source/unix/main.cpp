@@ -20,13 +20,6 @@
  * MA 02110-1301, USA.
  * 
  */
-
-#define NETWORK_MODE
-#define HEADLESS
-#ifdef HEADLESS
-#undef _GTK
-#endif
-
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/foreach.hpp>
@@ -78,11 +71,6 @@
 #include "input.h"
 #include "config.h"
 #include "cheats.h"
-
-#ifdef _GTK
-#include "gtkui/gtkui.h"
-#include "gtkui/gtkui_archive.h"
-#endif
 
 using namespace Nes::Api;
 
@@ -796,15 +784,7 @@ void nst_load(const char *filename) {
 	nst_unload(); drawtime = false;
 	
 	// Handle the file as an archive if it is one
-	#ifdef _GTK
-	char reqname[256];
-	bool isarchive = gtkui_archive_handle(filename, reqname, sizeof(reqname));
-	
-	if (isarchive) {
-		nst_archive_handle(filename, &rom, &romsize, reqname);
-	#else
 	if (nst_archive_handle(filename, &rom, &romsize, NULL)) {
-	#endif
 		// Convert the malloc'd char* to an istream
 		std::string rombuf(rom, romsize);
 		std::istringstream file(rombuf);
@@ -827,9 +807,6 @@ void nst_load(const char *filename) {
 	
 	if (NES_FAILED(result)) {
 		char errorstring[32];
-		#ifdef _GTK
-		if (conf.video_fullscreen) { video_toggle_fullscreen(); }
-		#endif
 		switch (result) {
 			case Nes::RESULT_ERR_INVALID_FILE:
 				snprintf(errorstring, sizeof(errorstring), "Error: Invalid file");
@@ -857,18 +834,6 @@ void nst_load(const char *filename) {
 		}
 		
 		fprintf(stderr, "%s\n", errorstring);
-		#ifdef _GTK
-		if (conf.misc_disable_gui) { cli_error(errorstring); }
-		else {
-			if (conf.video_fullscreen) {
-				video_destroy();
-				conf.video_fullscreen = false;
-				video_create();
-				video_set_cursor();
-			}
-			gtkui_message(errorstring);
-		}
-		#endif
 		
 		return;
 	}
@@ -897,9 +862,6 @@ void nst_load(const char *filename) {
 	
 	// Set the title
 	video_set_title(nstpaths.gamename);
-	#ifdef _GTK
-	if (!conf.misc_disable_gui) { gtkui_set_title(nstpaths.gamename); }
-	#endif
 
 	// power on
 	machine.Power(true); // false = power off
@@ -908,7 +870,6 @@ void nst_load(const char *filename) {
 }
 
 int main(int argc, char *argv[]) {
-    #ifdef NETWORK_MODE
     int sockfd = 0;
     int newsockfd = 0;
     socklen_t clilen = 0;
@@ -960,7 +921,6 @@ int main(int argc, char *argv[]) {
             break;
         }
     } /* end of while */
-    #endif
 
 	// This is the main function
 	
@@ -976,29 +936,6 @@ int main(int argc, char *argv[]) {
 	// Read the config file and override defaults
 	config_file_read();
 	
-	// Exit if there is no CLI argument
-    #ifndef HEADLESS
-	#ifdef _GTK
-	if (argc == 1 && conf.misc_disable_gui) {
-	#else
-	if (argc == 1) {
-	#endif
-		cli_show_usage();
-		return 0;
-	}
-	cli_handle_command(argc, argv);
-    #endif
-	
-	// Handle command line arguments
-	
-    #ifndef HEADLESS
-	// Initialize SDL
-	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0) {
-		fprintf(stderr, "Couldn't initialize SDL: %s\n", SDL_GetError());
-		return 1;
-	}
-    #endif
-	
 	// Detect Joysticks
 	input_joysticks_detect();
 	
@@ -1012,13 +949,6 @@ int main(int argc, char *argv[]) {
 	video_set_dimensions();
 	
 	// Create the window
-	#ifdef _GTK
-	if (!conf.misc_disable_gui) { gtkui_init(argc, argv); }
-	#endif
-    #ifndef HEADLESS
-	video_create();
-    #endif
-	
 	// Set up the callbacks
 	Video::Output::lockCallback.Set(VideoLock, userData);
 	Video::Output::unlockCallback.Set(VideoUnlock, userData);
@@ -1037,102 +967,43 @@ int main(int argc, char *argv[]) {
 	nst_load_fds_bios();
 
 	// Load a rom from the command line
-    #ifdef NETWORK_MODE
-    int input_length = read(newsockfd, buffer, sizeof(char) * MB);
+  int input_length = read(newsockfd, buffer, sizeof(char) * MB);
 
-    std::stringstream rom_stream;
-    rom_stream << std::string(buffer);
-    boost::property_tree::ptree init_request;
-    try {
-        boost::property_tree::read_json(rom_stream, init_request);
-    } catch (boost::property_tree::json_parser::json_parser_error) {
-        std::cerr << "Could not read json string: " << buffer << std::endl;    
-        exit(1);
-    }
-    std::string rom_file = init_request.get_child("rom_file").get_value<std::string>();
-    #ifdef _GTK // This is a dirty hack
-    if (conf.misc_disable_gui) {
-        nst_load(rom_file.c_str());
+  std::stringstream rom_stream;
+  rom_stream << std::string(buffer);
+  boost::property_tree::ptree init_request;
+  try {
+    boost::property_tree::read_json(rom_stream, init_request);
+  } catch (boost::property_tree::json_parser::json_parser_error) {
+    std::cerr << "Could not read json string: " << buffer << std::endl;    
+    exit(1);
+  }
+  std::string rom_file = init_request.get_child("rom_file").get_value<std::string>();
+  conf.misc_disable_gui = true;
+  nst_load(rom_file.c_str());
+  if (loaded) {
+    boost::property_tree::ptree init_response;
 
-    } else {
-        if (strcmp(argv[argc - 1], "-e")) { 
-            nst_load(rom_file.c_str()); 
-        }
-    }
-
-    if (loaded) {
-        boost::property_tree::ptree init_response;
-
-        init_response.put("scale", conf.video_scale_factor);
-        init_response.put("width", Video::Output::WIDTH);
-        init_response.put("height", Video::Output::HEIGHT);
-
-        std::ostringstream response_stream;
-        boost::property_tree::write_json(response_stream, init_response);  
-        std::string response_string = response_stream.str();
-        write(newsockfd, response_string.c_str(), response_string.size());
-    } else {
-        fprintf(stderr, "Fatal: Could not load ROM\n");
-        exit(1);
-    }
-    #else
-    conf.misc_disable_gui = true;
-    nst_load(rom_file.c_str());
-    if (loaded) {
-        boost::property_tree::ptree init_response;
-
-        init_response.put("scale", conf.video_scale_factor);
-        init_response.put("width", Video::Output::WIDTH);
-        init_response.put("height", Video::Output::HEIGHT);
-        std::ostringstream response_stream;
-        boost::property_tree::write_json(response_stream, init_response);  
-        std::string response_string = response_stream.str();
-        write(newsockfd, response_string.c_str(), response_string.size());
-    } else {
-        fprintf(stderr, "Fatal: Could not load ROM\n");
-        exit(1);
-    }
-    #endif
-    #else
-	if (argc > 1) {
-		#ifdef _GTK // This is a dirty hack
-		if (conf.misc_disable_gui) {
-			nst_load(argv[argc - 1]);
-			if (!loaded) {
-				fprintf(stderr, "Fatal: Could not load ROM\n");
-				exit(1);
-			}
-		}
-		else {
-			if (strcmp(argv[argc - 1], "-e")) { nst_load(argv[argc - 1]); }
-		}
-		#else
-		conf.misc_disable_gui = true;
-		nst_load(argv[argc - 1]);
-		if (!loaded) {
-			fprintf(stderr, "Fatal: Could not load ROM\n");
-			exit(1);
-		}
-		#endif
-	}
-    #endif
+    init_response.put("scale", conf.video_scale_factor);
+    init_response.put("width", Video::Output::WIDTH);
+    init_response.put("height", Video::Output::HEIGHT);
+    std::ostringstream response_stream;
+    boost::property_tree::write_json(response_stream, init_response);  
+    std::string response_string = response_stream.str();
+    write(newsockfd, response_string.c_str(), response_string.size());
+  } else {
+    fprintf(stderr, "Fatal: Could not load ROM\n");
+    exit(1);
+  }
 	// Start the main loop
 	nst_quit = 0;
 	
-    int frame_count = 0;
+  int frame_count = 0;
 	while (!nst_quit) {
         frame_count ++;
 
-		#ifdef _GTK
-		while (gtk_events_pending()) {
-			gtk_main_iteration_do(TRUE);
-		}
-		if (!playing) { gtk_main_iteration_do(TRUE); }
-		#endif
-
 		if (playing) {
       memset(buffer, 0, input_length);
-      #ifdef NETWORK_MODE
       input_length = read(newsockfd, buffer, sizeof(char) * MB);
       std::stringstream ss;
       ss << std::string(buffer);
@@ -1144,26 +1015,6 @@ int main(int argc, char *argv[]) {
         exit(1);
       }
       input_match_network(cNstPads, tree);
-      #else
-			while (SDL_PollEvent(&event)) {
-				switch (event.type) {
-					case SDL_QUIT:
-						nst_quit = 1;
-						break;
-					case SDL_KEYDOWN:
-					case SDL_KEYUP:
-					case SDL_JOYHATMOTION:
-					case SDL_JOYAXISMOTION:
-					case SDL_JOYBUTTONDOWN:
-					case SDL_JOYBUTTONUP:
-					case SDL_MOUSEBUTTONDOWN:
-					case SDL_MOUSEBUTTONUP:
-						input_process(cNstPads, event);
-						break;
-					default: break;
-				}	
-			}
-      #endif
 			
 			if (NES_SUCCEEDED(Rewinder(emulator).Enable(true))) {
 				Rewinder(emulator).EnableSound(true);
@@ -1173,26 +1024,21 @@ int main(int argc, char *argv[]) {
 			
 			if (updateok) {
 				input_pulse_turbo(cNstPads);
-        #ifdef HEADLESS
         emulator.Execute(cNstVideo, NULL, cNstPads); 
-        #else
 				// Execute a frame
 				if (timing_frameskip()) {
 					emulator.Execute(NULL, NULL, cNstPads);
 				}
 				else {
           emulator.Execute(cNstVideo, NULL, cNstPads); 
-          }
-          #endif
-          #ifdef NETWORK_MODE
-          int video_scalefactor = conf.video_scale_factor;
-          int frame_width = Video::Output::WIDTH * video_scalefactor;
-          int frame_height = Video::Output::HEIGHT * video_scalefactor;
-          std::cout << "height: " << frame_height << std::endl;
-          std::cout << "width: " << frame_width << std::endl;
-          std::cout << "----------------------" << std::endl;
-          int data_sent = write(newsockfd, videoStream.pixels, frame_height * frame_width * 4);
-          #endif
+        }
+        int video_scalefactor = conf.video_scale_factor;
+        int frame_width = Video::Output::WIDTH * video_scalefactor;
+        int frame_height = Video::Output::HEIGHT * video_scalefactor;
+        std::cout << "height: " << frame_height << std::endl;
+        std::cout << "width: " << frame_width << std::endl;
+        std::cout << "----------------------" << std::endl;
+        int data_sent = write(newsockfd, videoStream.pixels, frame_height * frame_width * 4);
 			}
 		}
 	}

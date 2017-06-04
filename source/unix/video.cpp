@@ -38,11 +38,6 @@
 #include "font.h"
 #include "png.h"
 
-#ifdef _GTK
-#include "gtkui/gtkui.h"
-extern GtkWidget *drawingarea;
-#endif
-
 using namespace Nes::Api;
 
 int drawtext = 0;
@@ -148,12 +143,7 @@ void opengl_blit() {
 		glVertex2f(0, rendersize.h);
 	glEnd();
 	
-	#ifdef _GTK
-	if (conf.misc_disable_gui) { SDL_GL_SwapWindow(sdlwindow); }
-	else { conf.video_fullscreen ? SDL_GL_SwapWindow(sdlwindow) : SDL_GL_SwapWindow(embedwindow); }
-	#else
 	SDL_GL_SwapWindow(sdlwindow);
-	#endif
 }
 
 void video_init() {
@@ -182,28 +172,8 @@ void video_toggle_fullscreen() {
 	}
 	else { flags = 0; }
 	
-	#ifdef _GTK
-	if (conf.video_fullscreen) {
-		SDL_DestroyWindow(sdlwindow);
-		video_create_standalone();
-		SDL_GL_MakeCurrent(sdlwindow, glcontext);
-	}
-	else {
-		if (!conf.misc_disable_gui) {
-			SDL_GL_MakeCurrent(embedwindow, glcontext);
-			SDL_DestroyWindow(sdlwindow);
-			gtkui_resize();
-		}
-		else {
-			video_set_dimensions();
-			SDL_SetWindowFullscreen(sdlwindow, flags);
-			SDL_SetWindowSize(sdlwindow, rendersize.w, rendersize.h);
-		}
-	}
-	#else
 	SDL_SetWindowFullscreen(sdlwindow, flags);
 	SDL_SetWindowSize(sdlwindow, rendersize.w, rendersize.h);
-	#endif
 	
 	video_set_cursor();
 	video_init();
@@ -276,36 +246,13 @@ void video_create_standalone() {
 
 void video_create_embedded() {
 	// Create an embedded SDL window
-	#ifdef _GTK
-	GdkWindow *gdkwindow;
-	gdkwindow = gtk_widget_get_window(drawingarea);
-	embedwindow = SDL_CreateWindowFrom((void *)GDK_WINDOW_XID(gtk_widget_get_window(drawingarea)));
-	embedwindow->flags |= SDL_WINDOW_OPENGL;
-	SDL_GL_LoadLibrary(NULL);
-	if (nst_nsf) { video_disp_nsf(); }
-	#endif
 }
 
 void video_create() {
 	// Create the necessary window(s)
 	
-	#ifdef _GTK
-	if (conf.misc_disable_gui) {
-		video_create_standalone();
-		glcontext = SDL_GL_CreateContext(sdlwindow);
-	}
-	else {
-		video_create_embedded();
-		glcontext = SDL_GL_CreateContext(embedwindow);
-		if (conf.video_fullscreen) {
-			video_create_standalone();
-			glcontext = SDL_GL_CreateContext(sdlwindow);
-		}
-	}
-	#else
 	video_create_standalone();
 	//glcontext = SDL_GL_CreateContext(sdlwindow);
-	#endif
 	
 	if(glcontext == NULL) {
 		fprintf(stderr, "Could not create glcontext: %s\n", SDL_GetError());
@@ -544,12 +491,6 @@ void video_set_dimensions() {
 		rendersize.w = displaymode.w;
 	}
 	
-	#ifdef _GTK
-	if (!conf.misc_disable_gui) {
-		SDL_SetWindowSize(embedwindow, rendersize.w, rendersize.h);
-		gtkui_resize();
-	}
-	#endif
 	SDL_SetWindowSize(sdlwindow, rendersize.w, rendersize.h);
 }
 

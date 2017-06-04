@@ -19,7 +19,6 @@
  * MA 02110-1301, USA.
  * 
  */
-#undef _GTK
 #include <boost/foreach.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -33,11 +32,6 @@
 #include <stdlib.h>
 #include <string>
 #include <string.h>
-
-#ifdef _GTK
-#include "gtkui/gtkui.h"
-#include "gtkui/gtkui_config.h"
-#endif
 
 #include "main.h"
 #include "config.h"
@@ -701,15 +695,7 @@ void input_match_mouse(Input::Controllers *controllers, SDL_Event event) {
 	int x, y;
 	double xaspect;
 	double yaspect;
-	#ifdef _GTK
-	if (conf.misc_disable_gui) { SDL_GetMouseState(&x, &y); }
-	else {
-		x = event.button.x;
-		y = event.button.y;
-	}
-	#else
 	SDL_GetMouseState(&x, &y);
-	#endif
 	
 	switch(event.type) {
 		case SDL_MOUSEBUTTONUP:
@@ -1165,11 +1151,6 @@ int input_configure_item(int pnum, int bnum, int type) {
 	confrunning = true;
 	bool confstop = false;
 	while (confrunning) {
-		#ifdef _GTK
-		while (gtk_events_pending()) {
-			gtk_main_iteration_do(FALSE);
-		}
-		#endif
 		while(SDL_PollEvent(&event)) {
 			// Time to quit?
 			switch (event.key.keysym.sym) {

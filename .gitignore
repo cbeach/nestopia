@@ -7,4 +7,5 @@
 *.fds
 *.ips
 *.ups
+.ropeproject
 /nestopia
