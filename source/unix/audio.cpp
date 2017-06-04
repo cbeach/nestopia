@@ -28,12 +28,10 @@
 #include "config.h"
 #include "audio.h"
 
-#ifndef _MINGW
 #include <ao/ao.h>
 
 ao_device *aodevice;
 ao_sample_format format;
-#endif
 
 extern settings_t conf;
 extern Emulator emulator;
@@ -60,11 +58,9 @@ void audio_play() {
 		if (SDL_GetQueuedAudioSize(dev) > (Uint32)(bufsize * 3)) { SDL_ClearQueuedAudio(dev); }
 		#endif
 	}
-#ifndef _MINGW
 	else if (conf.audio_api == 1) { // libao
 		ao_play(aodevice, (char*)audiobuf, bufsize);
 	}
-#endif
 	updateok = true;
 }
 
@@ -77,10 +73,6 @@ void audio_init() {
 	channels = conf.audio_stereo ? 2 : 1;
 	
 	memset(audiobuf, 0, sizeof(audiobuf));
-	
-	#ifdef _MINGW
-	conf.audio_api = 0; // Set SDL audio for MinGW
-	#endif
 	
 	#if SDL_VERSION_ATLEAST(2,0,4)
 	#else // Force libao if SDL lib is not modern enough
@@ -109,7 +101,6 @@ void audio_init() {
 		
 		SDL_PauseAudioDevice(dev, 1);  // Setting to 0 unpauses
 	}
-#ifndef _MINGW
 	else if (conf.audio_api == 1) { // libao
 		ao_initialize();
 		
@@ -130,7 +121,6 @@ void audio_init() {
 			fprintf(stderr, "Audio: libao - %dHz, %d-bit, %d channel(s)\n", format.rate, format.bits, format.channels);
 		}
 	}
-#endif
 }
 
 void audio_deinit() {
@@ -139,12 +129,10 @@ void audio_deinit() {
 	if (conf.audio_api == 0) { // SDL
 		SDL_CloseAudioDevice(dev);
 	}
-#ifndef _MINGW
 	else if (conf.audio_api == 1) { // libao
 		ao_close(aodevice);
 		ao_shutdown();
 	}
-#endif
 }
 
 void audio_pause() {

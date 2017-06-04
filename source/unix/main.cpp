@@ -43,13 +43,8 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <string.h>
-#ifdef _MINGW
-#include <io.h>
-#endif
-#ifndef _MINGW
 #include <archive.h>
 #include <archive_entry.h>
-#endif
 
 #include "core/api/NstApiEmulator.hpp"
 #include "core/api/NstApiVideo.hpp"
@@ -481,53 +476,32 @@ void nst_schedule_quit() {
 }
 
 void nst_set_dirs() {
-	// Set up system directories
-#ifdef _MINGW
-	snprintf(nstpaths.nstdir, sizeof(nstpaths.nstdir), "");
-#else
 	// create system directory if it doesn't exist
 	snprintf(nstpaths.nstdir, sizeof(nstpaths.nstdir), "%s/.nestopia/", getenv("HOME"));
 	if (mkdir(nstpaths.nstdir, 0755) && errno != EEXIST) {	
 		fprintf(stderr, "Failed to create %s: %d\n", nstpaths.nstdir, errno);
 	}
-#endif
 	// create save and state directories if they don't exist
 	char dirstr[256];
 	snprintf(dirstr, sizeof(dirstr), "%ssave", nstpaths.nstdir);
-#ifdef _MINGW	
-	if (mkdir(dirstr) && errno != EEXIST) {
-#else
 	if (mkdir(dirstr, 0755) && errno != EEXIST) {
-#endif
 		fprintf(stderr, "Failed to create %s: %d\n", dirstr, errno);
 	}
 
 	snprintf(dirstr, sizeof(dirstr), "%sstate", nstpaths.nstdir);
-#ifdef _MINGW	
-	if (mkdir(dirstr) && errno != EEXIST) {
-#else
 	if (mkdir(dirstr, 0755) && errno != EEXIST) {
-#endif
 		fprintf(stderr, "Failed to create %s: %d\n", dirstr, errno);
 	}
 	
 	// create cheats directory if it doesn't exist
 	snprintf(dirstr, sizeof(dirstr), "%scheats", nstpaths.nstdir);
-#ifdef _MINGW	
-	if (mkdir(dirstr) && errno != EEXIST) {
-#else
 	if (mkdir(dirstr, 0755) && errno != EEXIST) {
-#endif
 		fprintf(stderr, "Failed to create %s: %d\n", dirstr, errno);
 	}
 	
 	// create screenshots directory if it doesn't exist
 	snprintf(dirstr, sizeof(dirstr), "%sscreenshots", nstpaths.nstdir);
-#ifdef _MINGW	
-	if (mkdir(dirstr) && errno != EEXIST) {
-#else
 	if (mkdir(dirstr, 0755) && errno != EEXIST) {
-#endif
 		fprintf(stderr, "Failed to create %s: %d\n", dirstr, errno);
 	}
 }
@@ -621,7 +595,6 @@ bool nst_archive_checkext(const char *filename) {
 
 bool nst_archive_handle(const char *filename, char **rom, int *romsize, const char *reqfile) {
 	// Handle archives
-#ifndef _MINGW
 	struct archive *a;
 	struct archive_entry *entry;
 	int r;
@@ -672,7 +645,6 @@ bool nst_archive_handle(const char *filename, char **rom, int *romsize, const ch
 			}
 		}
 	}
-#endif
 	return false;
 }
 
@@ -717,7 +689,6 @@ void nst_load_db() {
 		database.Enable(true);
 		return;
 	}
-#ifndef _MINGW
 	// If it fails, try looking in the data directory
 	snprintf(dbpath, sizeof(dbpath), "%s/NstDatabase.xml", DATADIR);
 	nstdb = new std::ifstream(dbpath, std::ifstream::in|std::ifstream::binary);
@@ -738,7 +709,6 @@ void nst_load_db() {
 		database.Enable(true);
 		return;
 	}
-#endif
 	else {
 		fprintf(stderr, "NstDatabase.xml not found!\n");
 		delete nstdb;
@@ -870,57 +840,57 @@ void nst_load(const char *filename) {
 }
 
 int main(int argc, char *argv[]) {
-    int sockfd = 0;
-    int newsockfd = 0;
-    socklen_t clilen = 0;
-    int portno = 9090;
-    struct sockaddr_in serv_addr, cli_addr;
-    int  n, pid;
+  int sockfd = 0;
+  int newsockfd = 0;
+  socklen_t clilen = 0;
+  int portno = 9090;
+  struct sockaddr_in serv_addr, cli_addr;
+  int  n, pid;
 
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        perror("Error opening socket");
+  sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  if (sockfd < 0) {
+    perror("Error opening socket");
+    exit(1);
+  }
+
+  /* Initialize socket structure */
+  bzero((char *) &serv_addr, sizeof(serv_addr));
+
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_addr.s_addr = INADDR_ANY;
+  serv_addr.sin_port = htons(portno);
+
+  /* Now bind the host address using bind() call.*/
+  if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+    perror("ERROR on binding");
+    exit(1);
+  }
+  // 1 MB
+  char buffer[MB];
+
+  while (1) {
+    /* Now start listening for the clients, here
+    * process will go in sleep mode and will wait
+    * for the incoming connection
+    */
+    listen(sockfd,5);
+    clilen = sizeof(cli_addr);
+    newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+    if (newsockfd < 0) {
+        perror("ERROR on accept");
         exit(1);
     }
-
-    /* Initialize socket structure */
-    bzero((char *) &serv_addr, sizeof(serv_addr));
-
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(portno);
-
-    /* Now bind the host address using bind() call.*/
-    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
-        perror("ERROR on binding");
+    
+    /* Create child process */
+    pid = fork();
+    if (pid < 0) {
+        perror("ERROR on fork");
         exit(1);
+    } else if (pid == 0) {
+        /* This is the client process */
+        break;
     }
-    // 1 MB
-    char buffer[MB];
-
-    while (1) {
-        /* Now start listening for the clients, here
-        * process will go in sleep mode and will wait
-        * for the incoming connection
-        */
-        listen(sockfd,5);
-        clilen = sizeof(cli_addr);
-        newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
-        if (newsockfd < 0) {
-            perror("ERROR on accept");
-            exit(1);
-        }
-        
-        /* Create child process */
-        pid = fork();
-        if (pid < 0) {
-            perror("ERROR on fork");
-            exit(1);
-        } else if (pid == 0) {
-            /* This is the client process */
-            break;
-        }
-    } /* end of while */
+  } /* end of while */
 
 	// This is the main function
 	
