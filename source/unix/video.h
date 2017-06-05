@@ -7,9 +7,9 @@
 #define OVERSCAN_BOTTOM 8
 #define OVERSCAN_TOP 8
 
-#include <SDL.h>
-#include <SDL_opengl.h>
-#include <SDL_endian.h>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_opengl.h>
+#include <SDL2/SDL_endian.h>
 #include "GL/glu.h"
 
 // This is part of an elaborate hack to embed the SDL window

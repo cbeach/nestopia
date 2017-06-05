@@ -1,7 +1,7 @@
 #ifndef _AUDIO_H_
 #define _AUDIO_H_
 
-#include <SDL.h>
+#include <SDL2/SDL.h>
 #include "core/api/NstApiEmulator.hpp"
 #include "core/api/NstApiSound.hpp"
 

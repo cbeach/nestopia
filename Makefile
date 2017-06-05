@@ -1,14 +1,14 @@
-CC = cc
-CXX = c++
-CXXFLAGS ?= -O3 -g3
+CC = gcc
+CXX = g++
+CXXFLAGS ?= -O3 -g3 -std=c++0x 
 CPPFLAGS += -DNST_PRAGMA_ONCE
 CFLAGS = $(shell sdl2-config --cflags)
 
-INCLUDES = -Isource
+INCLUDES = -Isource -I/usr/local/include
 WARNINGS = -Wno-write-strings
 
-LDFLAGS = -Wl,--as-needed
-LIBS = -lstdc++ -lm -lz
+LDFLAGS = -Wl,--as-needed 
+LIBS = -lstdc++ -lm -lz -L/usr/local/lib `pkg-config --libs grpc++` -lgrpc++_reflection -lprotobuf -lpthread -ldl
 LIBS += $(shell sdl2-config --libs)
 
 UNAME := $(shell uname)
@@ -29,17 +29,17 @@ else
 	LIBS += -larchive
 	LIBS += -lGL -lGLU -lao
 	# GTK Stuff - Comment this section to disable GTK+
-	CFLAGS += $(shell pkg-config --cflags gtk+-3.0)
-	LIBS += $(shell pkg-config --libs gtk+-3.0)
-	DEFINES += -D_GTK
-	IOBJS += objs/unix/gtkui/gtkui.o
-	IOBJS += objs/unix/gtkui/gtkui_archive.o
-	IOBJS += objs/unix/gtkui/gtkui_callbacks.o
-	IOBJS += objs/unix/gtkui/gtkui_cheats.o
-	IOBJS += objs/unix/gtkui/gtkui_config.o
-	IOBJS += objs/unix/gtkui/gtkui_dialogs.o
-	OBJDIRS += objs/unix/gtkui
-	WARNINGS += -Wno-deprecated-declarations
+	# CFLAGS += $(shell pkg-config --cflags gtk+-3.0)
+	# LIBS += $(shell pkg-config --libs gtk+-3.0)
+	# DEFINES += -D_GTK
+	# IOBJS += objs/unix/gtkui/gtkui.o
+	# IOBJS += objs/unix/gtkui/gtkui_archive.o
+	# IOBJS += objs/unix/gtkui/gtkui_callbacks.o
+	# IOBJS += objs/unix/gtkui/gtkui_cheats.o
+	# IOBJS += objs/unix/gtkui/gtkui_config.o
+	# IOBJS += objs/unix/gtkui/gtkui_dialogs.o
+	# OBJDIRS += objs/unix/gtkui
+	# WARNINGS += -Wno-deprecated-declarations
 	# end GTK
 endif
 
@@ -350,6 +350,12 @@ IOBJS += objs/unix/cheats.o
 IOBJS += objs/unix/cursor.o
 IOBJS += objs/unix/ini.o
 IOBJS += objs/unix/png.o
+IOBJS += objs/unix/common.grpc.pb.o
+IOBJS += objs/unix/common.pb.o
+IOBJS += objs/unix/deep_thought.grpc.pb.o
+IOBJS += objs/unix/deep_thought.pb.o
+IOBJS += objs/unix/nes.grpc.pb.o
+IOBJS += objs/unix/nes.pb.o
 
 # object dirs
 OBJDIRS += objs objs/core objs/core/api objs/core/board objs/core/input
@@ -361,6 +367,9 @@ objs/core/%.o: source/core/%.cpp
 
 # Interface rules
 objs/unix/%.o: source/unix/%.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(WARNINGS) $(DEFINES) $(CFLAGS) -c $< -o $@
+
+objs/unix/%.o: source/unix/%.cc
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(WARNINGS) $(DEFINES) $(CFLAGS) -c $< -o $@
 
 all: maketree $(BIN)

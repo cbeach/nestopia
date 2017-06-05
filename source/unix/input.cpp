@@ -557,7 +557,7 @@ void input_match_network(Input::Controllers *controllers, boost::property_tree::
         }
         
         if (input_string == "quit") { 
-            if (conf.misc_disable_gui) { nst_schedule_quit(); }
+            nst_schedule_quit();
         }
     }
     //if (nesinput.pressed == 0) {

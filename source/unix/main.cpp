@@ -67,6 +67,13 @@
 #include "config.h"
 #include "cheats.h"
 
+#include <grpc/grpc.h>                                                                                                                                                                                              
+#include <grpc++/server.h>                                                                                                                                                 
+#include <grpc++/server_builder.h>                                                                                                                                         
+#include <grpc++/server_context.h>                                                                                                                                         
+#include <grpc++/security/server_credentials.h>                                                                                                                            
+#include "deep_thought.grpc.pb.h"
+
 using namespace Nes::Api;
 
 const int MB = 1048576;
@@ -949,7 +956,6 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
   std::string rom_file = init_request.get_child("rom_file").get_value<std::string>();
-  conf.misc_disable_gui = true;
   nst_load(rom_file.c_str());
   if (loaded) {
     boost::property_tree::ptree init_response;

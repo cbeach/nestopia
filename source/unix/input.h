@@ -7,7 +7,7 @@
 #define DEADZONE (32768/3)
 
 #include <boost/property_tree/ptree.hpp>
-#include <SDL.h>
+#include <SDL2/SDL.h>
 #include "core/api/NstApiInput.hpp"
 #include "core/api/NstApiVideo.hpp"
 #include "core/api/NstApiNsf.hpp"
