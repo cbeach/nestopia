@@ -23,6 +23,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/foreach.hpp>
+#include <boost/lexical_cast.hpp>
 #include <cassert>
 #include <exception>
 #include <sstream>
@@ -61,11 +62,12 @@
 
 #include "main.h"
 #include "cli.h"
-#include "audio.h"
-#include "video.h"
-#include "input.h"
-#include "config.h"
+//#include "audio.h"
+//#include "video.h"
+//#include "input.h"
+//#include "config.h"
 #include "cheats.h"
+#include <ao/ao.h>
 
 #include <grpc/grpc.h>                                                                                                                                                                                              
 #include <grpc++/server.h>                                                                                                                                                 
@@ -77,6 +79,7 @@
 using namespace Nes::Api;
 
 const int MB = 1048576;
+settings_t conf;
 
 // base class, all interfaces derives from this
 Emulator emulator;
@@ -104,18 +107,869 @@ static std::ifstream *moviefile;
 static std::fstream *movierecfile;
 
 extern settings_t conf;
-extern bool altspeed;
 
-extern int drawtext;
-extern char textbuf[32];
+turbo_t turbostate;
+turbo_t turbotoggle;
 
-extern bool drawtime;
-extern char timebuf[6];
+//extern char timebuf[6];
 Video::Output videoStream;
+
+dimensions_t basesize, rendersize;
+static uint32_t videobuf[31457280]; // Maximum possible internal size
+Video::RenderState::Filter filter;
+Video::RenderState renderstate;
+
+ao_device *aodevice;
+ao_sample_format format;
+
+SDL_AudioSpec spec, obtained;
+SDL_AudioDeviceID dev;
+
+int16_t audiobuf[96000];
+
+int framerate, channels, bufsize;
+
+bool altspeed = true;
+uiinput_t ui;
+
+gamepad_t player[NUMGAMEPADS];
+
+SDL_Event input_translate_string(char *string) {
+	// Translate an inputcode to an SDL_Event
+	SDL_Event event;
+	
+	int type, which, axis, value;
+	
+	if ((unsigned char)string[2] == 0x61) { // Axis
+		which = string[1] - '0';
+		axis = string[3] - '0';
+		value = string[4] - '0';
+		event.type = SDL_JOYAXISMOTION;
+		event.jaxis.which = which;
+		event.jaxis.axis = axis;
+		event.jaxis.value = value;
+	}
+	else if ((unsigned char)string[2] == 0x62) { // Button
+		which = string[1] - '0';
+		value = string[3] - '0';
+		event.type = SDL_JOYBUTTONDOWN;
+		event.jbutton.which = which;
+		event.jbutton.button = value;
+		
+	}
+	else if ((unsigned char)string[2] == 0x68) { // Hat
+		which = string[1] - '0';
+		axis = string[3] - '0';
+		value = string[4] - '0';
+		event.type = SDL_JOYHATMOTION;
+		event.jhat.which = which;
+		event.jhat.hat = axis;
+		event.jhat.value = value;
+	}
+	else {
+		fprintf(stderr, "Malformed inputcode: %s\n", string);
+	}
+	
+	return event;
+}
+void input_pulse_turbo(Input::Controllers *controllers) {
+	// Pulse the turbo buttons if they're pressed
+	if (turbostate.p1a) {
+		turbotoggle.p1a++;
+		if (turbotoggle.p1a >= conf.timing_turbopulse) {
+			turbotoggle.p1a = 0;
+			controllers->pad[0].buttons &= ~Input::Controllers::Pad::A;
+		}
+		else { controllers->pad[0].buttons |= Input::Controllers::Pad::A; }
+	}
+	
+	if (turbostate.p1b) {
+		turbotoggle.p1b++;
+		if (turbotoggle.p1b >= conf.timing_turbopulse) {
+			turbotoggle.p1b = 0;
+			controllers->pad[0].buttons &= ~Input::Controllers::Pad::B;
+		}
+		else { controllers->pad[0].buttons |= Input::Controllers::Pad::B; }
+	}
+	
+	if (turbostate.p2a) {
+		turbotoggle.p2a++;
+		if (turbotoggle.p2a >= conf.timing_turbopulse) {
+			turbotoggle.p2a = 0;
+			controllers->pad[1].buttons &= ~Input::Controllers::Pad::A;
+		}
+		else { controllers->pad[1].buttons |= Input::Controllers::Pad::A; }
+	}
+	
+	if (turbostate.p2b) {
+		turbotoggle.p2b++;
+		if (turbotoggle.p2b >= conf.timing_turbopulse) {
+			turbotoggle.p2b = 0;
+			controllers->pad[1].buttons &= ~Input::Controllers::Pad::B;
+		}
+		else { controllers->pad[1].buttons |= Input::Controllers::Pad::B; }
+	}
+}
+void input_set_default() {
+	// Set default input config
+	
+	ui.qsave1 = SDL_GetScancodeFromName("F5");
+	ui.qsave2 = SDL_GetScancodeFromName("F6");
+	ui.qload1 = SDL_GetScancodeFromName("F7");
+	ui.qload2 = SDL_GetScancodeFromName("F8");
+	
+	ui.screenshot = SDL_GetScancodeFromName("F9");
+	
+	ui.fdsflip = SDL_GetScancodeFromName("F3");
+	ui.fdsswitch = SDL_GetScancodeFromName("F4");
+	
+	ui.insertcoin1 = SDL_GetScancodeFromName("F1");
+	ui.insertcoin2 = SDL_GetScancodeFromName("F2");
+	
+	ui.reset = SDL_GetScancodeFromName("F12");
+	
+	ui.altspeed = SDL_GetScancodeFromName("`");
+	ui.rwstart = SDL_GetScancodeFromName("Backspace");
+	ui.rwstop = SDL_GetScancodeFromName("\\");
+	
+	ui.fullscreen = SDL_GetScancodeFromName("F");
+	ui.filter = SDL_GetScancodeFromName("T");
+	ui.scalefactor = SDL_GetScancodeFromName("G");
+	
+	player[0].u = SDL_GetScancodeFromName("Up");
+	player[0].d = SDL_GetScancodeFromName("Down");
+	player[0].l = SDL_GetScancodeFromName("Left");
+	player[0].r = SDL_GetScancodeFromName("Right");
+	player[0].select = SDL_GetScancodeFromName("Right Shift");
+	player[0].start = SDL_GetScancodeFromName("Right Ctrl");
+	player[0].a = SDL_GetScancodeFromName("Z");
+	player[0].b = SDL_GetScancodeFromName("A");
+	player[0].ta = SDL_GetScancodeFromName("X");
+	player[0].tb = SDL_GetScancodeFromName("S");
+
+	player[0].ju = input_translate_string("j0h01");
+	player[0].jd = input_translate_string("j0h04");
+	player[0].jl = input_translate_string("j0h08");
+	player[0].jr = input_translate_string("j0h02");
+	player[0].jselect = input_translate_string("j0b8");
+	player[0].jstart = input_translate_string("j0b9");
+	player[0].ja = input_translate_string("j0b1");
+	player[0].jb = input_translate_string("j0b0");
+	player[0].jta = input_translate_string("j0b2");
+	player[0].jtb = input_translate_string("j0b3");
+	
+	player[1].u = SDL_GetScancodeFromName("I");
+	player[1].d = SDL_GetScancodeFromName("K");
+	player[1].l = SDL_GetScancodeFromName("J");
+	player[1].r = SDL_GetScancodeFromName("L");
+	player[1].select = SDL_GetScancodeFromName("Left Shift");
+	player[1].start = SDL_GetScancodeFromName("Left Ctrl");
+	player[1].a = SDL_GetScancodeFromName("M");
+	player[1].b = SDL_GetScancodeFromName("N");
+	player[1].ta = SDL_GetScancodeFromName("B");
+	player[1].tb = SDL_GetScancodeFromName("V");
+	
+	player[1].ju = input_translate_string("j1h01");
+	player[1].jd = input_translate_string("j1h04");
+	player[1].jl = input_translate_string("j1h08");
+	player[1].jr = input_translate_string("j1h02");
+	player[1].jselect = input_translate_string("j1b8");
+	player[1].jstart = input_translate_string("j1b9");
+	player[1].ja = input_translate_string("j1b1");
+	player[1].jb = input_translate_string("j1b0");
+	player[1].jta = input_translate_string("j1b2");
+	player[1].jtb = input_translate_string("j1b3");
+}
+void input_inject(Input::Controllers *controllers, nesinput_t input) {
+	// Insert the input signal into the NES
+	if (input.pressed) {
+		controllers->pad[input.player].buttons |= input.nescode;
+		
+		if (input.turboa) { input.player == 0 ? turbostate.p1a = true : turbostate.p2a = true; }
+		if (input.turbob) { input.player == 0 ? turbostate.p1b = true : turbostate.p2b = true; }
+	}
+	else {
+		controllers->pad[input.player].buttons &= ~input.nescode;
+		
+		if (input.turboa) { input.player == 0 ? turbostate.p1a = false : turbostate.p2a = false; }
+		if (input.turbob) { input.player == 0 ? turbostate.p1b = false : turbostate.p2b = false; }
+	}
+}
+void input_match_network(Input::Controllers *controllers, boost::property_tree::ptree input) {
+  // Match NES buttons to keyboard buttons
+  nesinput_t nesinput;
+  
+  int player = 0;
+  try {
+    player = boost::lexical_cast<int>(input.get_child("player").get_value<std::string>());
+  } catch( boost::bad_lexical_cast const& ) {
+    std::cerr << "Error: player number string was not valid" << std::endl;
+  }
+  
+  nesinput.nescode = 0x00;
+  nesinput.player = player;
+  nesinput.pressed = 0;
+  nesinput.turboa = 0;
+  nesinput.turbob = 0;
+  
+  controllers->pad[nesinput.player].buttons = 0;
+  turbostate.p1a = false;
+  turbostate.p1b = false;
+  turbostate.p2a = false;
+  turbostate.p2b = false;    
+  
+  BOOST_FOREACH(boost::property_tree::ptree::value_type &i, input.get_child("controls")) {
+    std::string input_string(i.second.data());
+    if (input_string == "up") {
+      nesinput.pressed = 1;
+      nesinput.nescode |= Input::Controllers::Pad::UP;
+    }
+    if (input_string == "down") {
+      nesinput.pressed = 1;
+      nesinput.nescode |= Input::Controllers::Pad::DOWN;
+    }
+    if (input_string == "left") {
+      nesinput.pressed = 1;
+      nesinput.nescode |= Input::Controllers::Pad::LEFT;
+    }
+    if (input_string == "right") { // input.r
+      nesinput.pressed = 1;
+      nesinput.nescode |= Input::Controllers::Pad::RIGHT;
+    }
+    if (input_string == "select") { // input.select
+      nesinput.pressed = 1;
+      nesinput.nescode |= Input::Controllers::Pad::SELECT;
+    }
+    if (input_string == "start") { // input.start
+      nesinput.pressed = 1;
+      nesinput.nescode |= Input::Controllers::Pad::START;
+    }
+    if (input_string == "a") { // input.a
+      nesinput.pressed = 1;
+      nesinput.nescode |= Input::Controllers::Pad::A;
+    }
+    if (input_string == "b") { // input.b
+      nesinput.pressed = 1;
+      nesinput.nescode |= Input::Controllers::Pad::B;
+    }
+    if (input_string == "turbo_a") { // input.ta
+      nesinput.pressed = 1;
+      nesinput.nescode |= Input::Controllers::Pad::A;
+      nesinput.turboa = 1;
+    }
+    if (input_string == "turbo_b") { // input.tb
+      nesinput.pressed = 1;
+      nesinput.nescode |= Input::Controllers::Pad::B;
+      nesinput.turbob = 1;
+    }
+    if (input_string == "altspeed") { 
+      timing_set_altspeed(); 
+    }
+    else { 
+      timing_set_default(); 
+    }
+    
+    // Insert Coins
+    controllers->vsSystem.insertCoin = 0;
+    if (input_string == "insertcoin1") { 
+      controllers->vsSystem.insertCoin |= Input::Controllers::VsSystem::COIN_1; 
+    }
+    if (input_string == "insertcoin2") { 
+      controllers->vsSystem.insertCoin |= Input::Controllers::VsSystem::COIN_2; 
+    }
+    
+    // Process non-game events
+    if (input_string == "fdsflip") { nst_flip_disk(); }
+    if (input_string == "fdsswitch") { nst_switch_disk(); }
+    if (input_string == "qsave1") { nst_state_quicksave(0); }
+    if (input_string == "qsave2") { nst_state_quicksave(1); }
+    if (input_string == "qload1") { nst_state_quickload(0); }
+    if (input_string == "qload2") { nst_state_quickload(1); }
+    
+    // Screenshot
+    //if (input_string == "screenshot") { video_screenshot(NULL); }
+    
+    // Reset
+    if (input_string == "reset") { nst_reset(0); }
+    
+    // Rewinder
+    if (input_string == "rwstart") { nst_set_rewind(0); }
+    if (input_string == "rwstop") { nst_set_rewind(1); }
+    
+    // Video
+    //if (input_string == "fullscreen") { video_toggle_fullscreen(); }
+    //if (input_string == "filter") { video_toggle_filter(); }
+    //if (input_string == "scalefactor") { video_toggle_scalefactor(); }
+    
+    // NSF
+    if (nst_nsf) {
+      Nsf nsf(emulator);
+      
+      if (input_string == "up") { // input.u
+        nsf.PlaySong();
+        video_clear_buffer();
+        //video_disp_nsf();
+      }
+      if (input_string == "down") { // input.d
+        //nsf.StopSong();
+      }
+      if (input_string == "left") { // input.l
+        nsf.SelectPrevSong();
+        video_clear_buffer();
+        //video_disp_nsf();
+      }
+      if (input_string == "right") { // input.r
+        nsf.SelectNextSong();
+        video_clear_buffer();
+        //video_disp_nsf();
+      }
+    }
+    
+    if (input_string == "quit") { 
+      nst_schedule_quit();
+    }
+  }
+  //if (nesinput.pressed == 0) {
+  //    nesinput.nescode = 0;
+  //    controllers->pad[player].buttons = 0;
+  //}
+  input_inject(controllers, nesinput);
+}
+void input_init() {
+	// Initialize input
+	
+	char controller[32];
+	
+	for (int i = 0; i < NUMGAMEPADS; i++) {
+		Input(emulator).AutoSelectController(i);
+		
+		switch(Input(emulator).GetConnectedController(i)) {
+			case Input::UNCONNECTED:
+				snprintf(controller, sizeof(controller), "%s", "Unconnected");
+				break;
+			case Input::PAD1:
+			case Input::PAD2:
+			case Input::PAD3:
+			case Input::PAD4:
+				snprintf(controller, sizeof(controller), "%s", "Standard Pad");
+				break;
+			case Input::ZAPPER:
+				snprintf(controller, sizeof(controller), "%s", "Zapper");
+				break;
+			case Input::PADDLE:
+				snprintf(controller, sizeof(controller), "%s", "Arkanoid Paddle");
+				break;
+			case Input::POWERPAD:
+				snprintf(controller, sizeof(controller), "%s", "Power Pad");
+				break;
+			case Input::POWERGLOVE:
+				snprintf(controller, sizeof(controller), "%s", "Power Glove");
+				break;
+			case Input::MOUSE:
+				snprintf(controller, sizeof(controller), "%s", "Mouse");
+				break;
+			case Input::ROB:
+				snprintf(controller, sizeof(controller), "%s", "R.O.B.");
+				break;
+			case Input::FAMILYTRAINER:
+				snprintf(controller, sizeof(controller), "%s", "Family Trainer");
+				break;
+			case Input::FAMILYKEYBOARD:
+				snprintf(controller, sizeof(controller), "%s", "Family Keyboard");
+				break;
+			case Input::SUBORKEYBOARD:
+				snprintf(controller, sizeof(controller), "%s", "Subor Keyboard");
+				break;
+			case Input::DOREMIKKOKEYBOARD:
+				snprintf(controller, sizeof(controller), "%s", "Doremikko Keyboard");
+				break;
+			case Input::HORITRACK:
+				snprintf(controller, sizeof(controller), "%s", "Hori Track");
+				break;
+			case Input::PACHINKO:
+				snprintf(controller, sizeof(controller), "%s", "Pachinko");
+				break;
+			case Input::OEKAKIDSTABLET:
+				snprintf(controller, sizeof(controller), "%s", "Oeka Kids Tablet");
+				break;
+			case Input::KONAMIHYPERSHOT:
+				snprintf(controller, sizeof(controller), "%s", "Konami Hypershot");
+				break;
+			case Input::BANDAIHYPERSHOT:
+				snprintf(controller, sizeof(controller), "%s", "Bandai Hypershot");
+				break;
+			case Input::CRAZYCLIMBER:
+				snprintf(controller, sizeof(controller), "%s", "Crazy Climber");
+				break;
+			case Input::MAHJONG:
+				snprintf(controller, sizeof(controller), "%s", "Mahjong");
+				break;
+			case Input::EXCITINGBOXING:
+				snprintf(controller, sizeof(controller), "%s", "Exciting Boxing");
+				break;
+			case Input::TOPRIDER:
+				snprintf(controller, sizeof(controller), "%s", "Top Rider");
+				break;
+			case Input::POKKUNMOGURAA:
+				snprintf(controller, sizeof(controller), "%s", "Pokkun Moguraa");
+				break;
+			case Input::PARTYTAP:
+				snprintf(controller, sizeof(controller), "%s", "PartyTap");
+				break;
+			case Input::TURBOFILE:
+				snprintf(controller, sizeof(controller), "%s", "Turbo File");
+				break;
+			case Input::BARCODEWORLD:
+				snprintf(controller, sizeof(controller), "%s", "Barcode World");
+				break;
+			default:
+				snprintf(controller, sizeof(controller), "%s", "Unknown");
+				break;
+		}
+		
+		fprintf(stderr, "Port %d: %s\n", i + 1, controller);
+	}
+	
+}
+void config_set_default() {
+	
+	// Video
+	conf.video_filter = 0;
+	conf.video_scale_factor = 1;
+	conf.video_palette_mode = 0;
+	conf.video_decoder = 0;
+	conf.video_brightness = 0; // -100 to 100
+	conf.video_saturation = 0; // -100 to 100
+	conf.video_contrast = 0; // -100 to 100
+	conf.video_hue = 0; // -45 to 45
+	conf.video_ntsc_mode = 0;
+	conf.video_xbr_corner_rounding = 0;
+	conf.video_linear_filter = false;
+	conf.video_tv_aspect = false;
+	conf.video_unmask_overscan = false;
+	conf.video_fullscreen = false;
+	conf.video_stretch_aspect = false;
+	conf.video_unlimited_sprites = false;
+	conf.video_xbr_pixel_blending = false;
+	
+	// Audio
+	conf.audio_api = 1;
+	conf.audio_stereo = false;
+	conf.audio_sample_rate = 44100;
+	conf.audio_volume = 85;
+	conf.audio_vol_sq1 = 85;
+	conf.audio_vol_sq2 = 85;
+	conf.audio_vol_tri = 85;
+	conf.audio_vol_noise = 85;
+	conf.audio_vol_dpcm = 85;
+	conf.audio_vol_fds = 85;
+	conf.audio_vol_mmc5 = 85;
+	conf.audio_vol_vrc6 = 85;
+	conf.audio_vol_vrc7 = 85;
+	conf.audio_vol_n163 = 85;
+	conf.audio_vol_s5b = 85;
+	
+	// Timing
+	conf.timing_speed = 6000;
+	conf.timing_altspeed = 18000;
+	conf.timing_turbopulse = 3;
+	conf.timing_vsync = true;
+	conf.timing_limiter = true;
+	
+	// Misc
+	conf.misc_default_system = 0;
+	conf.misc_soft_patching = true;
+	//conf.misc_suppress_screensaver = true;
+	conf.misc_genie_distortion = false;
+	conf.misc_disable_gui = false;
+	conf.misc_config_pause = false;
+}
+void audio_play() {
+	
+	bufsize = 2 * channels * (conf.audio_sample_rate / framerate);
+	
+	if (conf.audio_api == 0) { // SDL
+		#if SDL_VERSION_ATLEAST(2,0,4)
+		SDL_QueueAudio(dev, (const void*)audiobuf, bufsize);
+		// Clear the audio queue arbitrarily to avoid it backing up too far
+		if (SDL_GetQueuedAudioSize(dev) > (Uint32)(bufsize * 3)) { SDL_ClearQueuedAudio(dev); }
+		#endif
+	}
+	else if (conf.audio_api == 1) { // libao
+		ao_play(aodevice, (char*)audiobuf, bufsize);
+	}
+	updateok = true;
+}
+
+void audio_init() {
+	// Initialize audio device
+	
+	// Set the framerate based on the region. For PAL: (60 / 6) * 5 = 50
+	framerate = nst_pal ? (conf.timing_speed / 6) * 5 : conf.timing_speed;
+	
+	channels = conf.audio_stereo ? 2 : 1;
+	
+	memset(audiobuf, 0, sizeof(audiobuf));
+	
+	#if SDL_VERSION_ATLEAST(2,0,4)
+	#else // Force libao if SDL lib is not modern enough
+	if (conf.audio_api == 0) {
+		conf.audio_api = 1;
+		fprintf(stderr, "Audio: Forcing libao\n");
+	}
+	#endif
+	
+	if (conf.audio_api == 0) { // SDL
+		spec.freq = conf.audio_sample_rate;
+		spec.format = AUDIO_S16SYS;
+		spec.channels = channels;
+		spec.silence = 0;
+		spec.samples = 512;
+		spec.userdata = 0;
+		spec.callback = NULL; // Use SDL_QueueAudio instead
+		
+		dev = SDL_OpenAudioDevice(NULL, 0, &spec, &obtained, SDL_AUDIO_ALLOW_ANY_CHANGE);
+		if (!dev) {
+			fprintf(stderr, "Error opening audio device.\n");
+		}
+		else {
+			fprintf(stderr, "Audio: SDL - %dHz %d-bit, %d channel(s)\n", spec.freq, 16, spec.channels);
+		}
+		
+		SDL_PauseAudioDevice(dev, 1);  // Setting to 0 unpauses
+	}
+	else if (conf.audio_api == 1) { // libao
+		ao_initialize();
+		
+		int default_driver = ao_default_driver_id();
+		
+		memset(&format, 0, sizeof(format));
+		format.bits = 16;
+		format.channels = channels;
+		format.rate = conf.audio_sample_rate;
+		format.byte_format = AO_FMT_NATIVE;
+		
+		aodevice = ao_open_live(default_driver, &format, NULL);
+		if (aodevice == NULL) {
+			fprintf(stderr, "Error opening audio device.\n");
+			aodevice = ao_open_live(ao_driver_id("null"), &format, NULL);
+		}
+		else {
+			fprintf(stderr, "Audio: libao - %dHz, %d-bit, %d channel(s)\n", format.rate, format.bits, format.channels);
+		}
+	}
+}
+
+void audio_deinit() {
+	// Deinitialize audio
+	
+	if (conf.audio_api == 0) { // SDL
+		SDL_CloseAudioDevice(dev);
+	}
+	else if (conf.audio_api == 1) { // libao
+		ao_close(aodevice);
+		ao_shutdown();
+	}
+}
+
+void audio_pause() {
+	// Pause the SDL audio device
+	if (conf.audio_api == 0) { // SDL
+		SDL_PauseAudioDevice(dev, 1);
+	}
+}
+
+void audio_unpause() {
+	// Unpause the SDL audio device
+	if (conf.audio_api == 0) { // SDL
+		SDL_PauseAudioDevice(dev, 0);
+	}
+}
+
+void audio_set_params(Sound::Output *soundoutput) {
+	// Set audio parameters
+	Sound sound(emulator);
+	
+	sound.SetSampleBits(16);
+	sound.SetSampleRate(conf.audio_sample_rate);
+	
+	sound.SetSpeaker(conf.audio_stereo ? Sound::SPEAKER_STEREO : Sound::SPEAKER_MONO);
+	sound.SetSpeed(Sound::DEFAULT_SPEED);
+	
+	audio_adj_volume();
+	
+	soundoutput->samples[0] = audiobuf;
+	soundoutput->length[0] = conf.audio_sample_rate / framerate;
+	soundoutput->samples[1] = NULL;
+	soundoutput->length[1] = 0;
+}
+
+void audio_adj_volume() {
+	// Adjust the audio volume to the current settings
+	Sound sound(emulator);
+	sound.SetVolume(Sound::ALL_CHANNELS, conf.audio_volume);
+	sound.SetVolume(Sound::CHANNEL_SQUARE1, conf.audio_vol_sq1);
+	sound.SetVolume(Sound::CHANNEL_SQUARE2, conf.audio_vol_sq2);
+	sound.SetVolume(Sound::CHANNEL_TRIANGLE, conf.audio_vol_tri);
+	sound.SetVolume(Sound::CHANNEL_NOISE, conf.audio_vol_noise);
+	sound.SetVolume(Sound::CHANNEL_DPCM, conf.audio_vol_dpcm);
+	sound.SetVolume(Sound::CHANNEL_FDS, conf.audio_vol_fds);
+	sound.SetVolume(Sound::CHANNEL_MMC5, conf.audio_vol_mmc5);
+	sound.SetVolume(Sound::CHANNEL_VRC6, conf.audio_vol_vrc6);
+	sound.SetVolume(Sound::CHANNEL_VRC7, conf.audio_vol_vrc7);
+	sound.SetVolume(Sound::CHANNEL_N163, conf.audio_vol_n163);
+	sound.SetVolume(Sound::CHANNEL_S5B, conf.audio_vol_s5b);
+	
+	if (conf.audio_volume == 0) { memset(audiobuf, 0, sizeof(audiobuf)); }
+}
+
+// Timing Functions
+
+bool timing_frameskip() {
+	// Calculate whether to skip a frame or not
+	if (conf.audio_api == 0) { // SDL
+		// Wait until the audio is drained
+		#if SDL_VERSION_ATLEAST(2,0,4)
+		while (SDL_GetQueuedAudioSize(dev) > (Uint32)bufsize) {
+			if (conf.timing_limiter) { SDL_Delay(1); }
+		}
+		#endif
+	}
+	
+	static int flipper = 1;
+	
+	if (altspeed) {
+		if (flipper > 2) { flipper = 0; return false; }
+		else { flipper++; return true; }
+	}
+	
+	return false;
+}
+
+void timing_set_default() {
+	// Set the framerate to the default
+	//altspeed = false;
+	//framerate = nst_pal ? (conf.timing_speed / 6) * 5 : conf.timing_speed;
+	altspeed = true;
+	framerate = conf.timing_altspeed;
+	#if SDL_VERSION_ATLEAST(2,0,4)
+	if (conf.audio_api == 0) { SDL_ClearQueuedAudio(dev); }
+	#endif
+}
+
+void timing_set_altspeed() {
+	// Set the framerate to the alternate speed
+	altspeed = true;
+	framerate = conf.timing_altspeed;
+}
+void video_init() {
+	// Initialize video
+	//opengl_cleanup();
+	
+	int scalefactor = conf.video_scale_factor;
+
+  basesize.w = Video::Output::WIDTH;
+  basesize.h = Video::Output::HEIGHT;
+  conf.video_tv_aspect == true ? rendersize.w = TV_WIDTH * scalefactor : rendersize.w = Video::Output::WIDTH * scalefactor;
+  rendersize.h = Video::Output::HEIGHT * scalefactor;
+
+  video_set_filter();
+	
+	//opengl_init_structures();
+	
+	if (nst_nsf) { 
+    video_clear_buffer(); 
+    //video_disp_nsf(); 
+  }
+	
+	//video_set_cursor();
+}
+void video_clear_buffer() {
+	// Write black to the video buffer
+	for (int i = 0; i < 31457280; i++) {
+		videobuf[i] = 0x00000000;
+	}
+}
+
+void video_set_filter() {
+	// Set the filter
+	Video video(emulator);
+	int scalefactor = conf.video_scale_factor;
+	
+	switch(conf.video_filter) {
+		case 0:	// None
+			filter = Video::RenderState::FILTER_NONE;
+			break;
+
+		case 1: // NTSC
+			filter = Video::RenderState::FILTER_NTSC;
+			break;
+
+		case 2: // xBR
+			switch (scalefactor) {
+				case 2:
+					filter = Video::RenderState::FILTER_2XBR;
+					break;
+
+				case 3:
+					filter = Video::RenderState::FILTER_3XBR;
+					break;
+
+				case 4:
+					filter = Video::RenderState::FILTER_4XBR;
+					break;
+
+				default:
+					filter = Video::RenderState::FILTER_NONE;
+					break;
+			}
+			break;
+
+		case 3: // scale HQx
+			switch (scalefactor) {
+				case 2:
+					filter = Video::RenderState::FILTER_HQ2X;
+					break;
+
+				case 3:
+					filter = Video::RenderState::FILTER_HQ3X;
+					break;
+
+				case 4:
+					filter = Video::RenderState::FILTER_HQ4X;
+					break;
+
+				default:
+					filter = Video::RenderState::FILTER_NONE;
+					break;
+			}
+			break;
+		
+		case 4: // 2xSaI
+			filter = Video::RenderState::FILTER_2XSAI;
+			break;
+
+		case 5: // scale x
+			switch (scalefactor) {
+				case 2:
+					filter = Video::RenderState::FILTER_SCALE2X;
+					break;
+
+				case 3:
+					filter = Video::RenderState::FILTER_SCALE3X;
+					break;
+
+				default:
+					filter = Video::RenderState::FILTER_NONE;
+					break;
+			}
+			break;
+		break;
+	}
+	
+	// Set the sprite limit:  false = enable sprite limit, true = disable sprite limit
+	video.EnableUnlimSprites(conf.video_unlimited_sprites ? true : false);
+	
+	// Set Palette options
+	switch (conf.video_palette_mode) {
+		case 0: // YUV
+			video.GetPalette().SetMode(Video::Palette::MODE_YUV);
+			break;
+		
+		case 1: // RGB
+			video.GetPalette().SetMode(Video::Palette::MODE_RGB);
+	}
+	
+	// Set YUV Decoder/Picture options
+	if (video.GetPalette().GetMode() != Video::Palette::MODE_RGB) {
+		switch (conf.video_decoder) {
+			case 0: // Consumer
+				video.SetDecoder(Video::DECODER_CONSUMER);
+				break;
+			
+			case 1: // Canonical
+				video.SetDecoder(Video::DECODER_CANONICAL);
+				break;
+			
+			case 2: // Alternative (Canonical with yellow boost)
+				video.SetDecoder(Video::DECODER_ALTERNATIVE);
+				break;
+			
+			default: break;
+		}
+		
+		video.SetBrightness(conf.video_brightness);
+		video.SetSaturation(conf.video_saturation);
+		video.SetContrast(conf.video_contrast);
+		video.SetHue(conf.video_hue);
+	}
+	
+	// Set NTSC options
+	switch (conf.video_ntsc_mode) {
+		case 0:	// Composite
+			video.SetSharpness(Video::DEFAULT_SHARPNESS_COMP);
+			video.SetColorResolution(Video::DEFAULT_COLOR_RESOLUTION_COMP);
+			video.SetColorBleed(Video::DEFAULT_COLOR_BLEED_COMP);
+			video.SetColorArtifacts(Video::DEFAULT_COLOR_ARTIFACTS_COMP);
+			video.SetColorFringing(Video::DEFAULT_COLOR_FRINGING_COMP);
+			break;
+		
+		case 1:	// S-Video
+			video.SetSharpness(Video::DEFAULT_SHARPNESS_SVIDEO);
+			video.SetColorResolution(Video::DEFAULT_COLOR_RESOLUTION_SVIDEO);
+			video.SetColorBleed(Video::DEFAULT_COLOR_BLEED_SVIDEO);
+			video.SetColorArtifacts(Video::DEFAULT_COLOR_ARTIFACTS_SVIDEO);
+			video.SetColorFringing(Video::DEFAULT_COLOR_FRINGING_SVIDEO);
+			break;
+		
+		case 2:	// RGB
+			video.SetSharpness(Video::DEFAULT_SHARPNESS_RGB);
+			video.SetColorResolution(Video::DEFAULT_COLOR_RESOLUTION_RGB);
+			video.SetColorBleed(Video::DEFAULT_COLOR_BLEED_RGB);
+			video.SetColorArtifacts(Video::DEFAULT_COLOR_ARTIFACTS_RGB);
+			video.SetColorFringing(Video::DEFAULT_COLOR_FRINGING_RGB);
+			break;
+		
+		default: break;
+	}
+	
+	// Set xBR options
+	if (conf.video_filter == 2) {
+		video.SetCornerRounding(conf.video_xbr_corner_rounding);
+		video.SetBlend(conf.video_xbr_pixel_blending);
+	}
+	
+	// Set up the render state parameters
+	renderstate.filter = filter;
+	renderstate.width = basesize.w;
+	renderstate.height = basesize.h;
+	renderstate.bits.count = 32;
+	
+	#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+	renderstate.bits.mask.r = 0x000000ff;
+	renderstate.bits.mask.g = 0xff000000;
+	renderstate.bits.mask.b = 0x00ff0000;
+	#else
+	renderstate.bits.mask.r = 0x00ff0000;
+	renderstate.bits.mask.g = 0x0000ff00;
+	renderstate.bits.mask.b = 0x000000ff;
+	#endif
+
+	if (NES_FAILED(video.SetRenderState(renderstate))) {
+		fprintf(stderr, "Nestopia core rejected render state\n");
+		exit(1);
+	}
+}
 
 // *******************
 // emulation callbacks
 // *******************
+
+
+long video_lock_screen(void*& ptr) {
+	ptr = videobuf;
+	return Video::Output::WIDTH * 4;
+}
 
 // called right before Nestopia is about to write pixels
 static bool NST_CALLBACK VideoLock(void* userData, Video::Output& video) {
@@ -125,8 +979,8 @@ static bool NST_CALLBACK VideoLock(void* userData, Video::Output& video) {
 
 // called right after Nestopia has finished writing pixels (not called if previous lock failed)
 static void NST_CALLBACK VideoUnlock(void* userData, Video::Output& video) {
-    videoStream = video;
-	video_unlock_screen(video.pixels);
+  videoStream = video;
+	//video_unlock_screen(video.pixels);
 }
 
 static bool NST_CALLBACK SoundLock(void* userData, Sound::Output& sound) {
@@ -148,8 +1002,8 @@ static void NST_CALLBACK nst_cb_event(void *userData, User::Event event, const v
 			break;
 		case User::EVENT_DISPLAY_TIMER:
 			fprintf(stderr, "\r%s", (const char*)data);
-			snprintf(timebuf, sizeof(timebuf), "%s", (const char*)data + strlen((char*)data) - 5);
-			drawtime = true;
+			//snprintf(timebuf, sizeof(timebuf), "%s", (const char*)data + strlen((char*)data) - 5);
+			//drawtime = true;
 			break;
 		default: break;
 	}
@@ -272,7 +1126,7 @@ void nst_pause() {
 	}
 	
 	playing = false;
-	video_set_cursor();
+	//video_set_cursor();
 }
 
 void nst_fds_info() {
@@ -285,7 +1139,7 @@ void nst_fds_info() {
 	fds.GetCurrentDiskSide() == 0 ? side = "A" : side = "B";
 
 	fprintf(stderr, "Fds: Disk %s Side %s\n", disk, side);
-	snprintf(textbuf, sizeof(textbuf), "Disk %s Side %s", disk, side); drawtext = 120;
+	//snprintf(textbuf, sizeof(textbuf), "Disk %s Side %s", disk, side); drawtext = 120;
 }
 
 void nst_flip_disk() {
@@ -361,7 +1215,7 @@ void nst_state_save(char *filename) {
 	
 	if (statefile.is_open()) { machine.SaveState(statefile, Nes::Api::Machine::NO_COMPRESSION); }
 	fprintf(stderr, "State Saved: %s\n", filename);
-	snprintf(textbuf, sizeof(textbuf), "State Saved."); drawtext = 120;
+	//snprintf(textbuf, sizeof(textbuf), "State Saved."); drawtext = 120;
 }
 
 void nst_state_load(char *filename) {
@@ -372,7 +1226,7 @@ void nst_state_load(char *filename) {
 	
 	if (statefile.is_open()) { machine.LoadState(statefile); }
 	fprintf(stderr, "State Loaded: %s\n", filename);
-	snprintf(textbuf, sizeof(textbuf), "State Loaded."); drawtext = 120; 
+	//snprintf(textbuf, sizeof(textbuf), "State Loaded."); drawtext = 120; 
 }
 
 void nst_state_quicksave(int slot) {
@@ -390,8 +1244,8 @@ void nst_state_quickload(int slot) {
 		
 	struct stat qloadstat;
 	if (stat(slotpath, &qloadstat) == -1) {
-		fprintf(stderr, "No State to Load\n"); drawtext = 120;
-		snprintf(textbuf, sizeof(textbuf), "No State to Load.");
+		//fprintf(stderr, "No State to Load\n"); drawtext = 120;
+		//snprintf(textbuf, sizeof(textbuf), "No State to Load.");
 		return;
 	}
 	
@@ -460,7 +1314,7 @@ void nst_play() {
 	if (nst_nsf) {
 		Nsf nsf(emulator);
 		nsf.PlaySong();
-		video_disp_nsf();
+		//video_disp_nsf();
 	}
 	
 	updateok = false;
@@ -758,7 +1612,8 @@ void nst_load(const char *filename) {
 	if (playing) { nst_pause(); }
 	
 	// Pull out any inserted cartridges
-	nst_unload(); drawtime = false;
+	nst_unload(); 
+  //drawtime = false;
 	
 	// Handle the file as an archive if it is one
 	if (nst_archive_handle(filename, &rom, &romsize, NULL)) {
@@ -838,7 +1693,7 @@ void nst_load(const char *filename) {
 	loaded = 1;
 	
 	// Set the title
-	video_set_title(nstpaths.gamename);
+	//video_set_title(nstpaths.gamename);
 
 	// power on
 	machine.Power(true); // false = power off
@@ -911,19 +1766,19 @@ int main(int argc, char *argv[]) {
 	config_set_default();
 	
 	// Read the config file and override defaults
-	config_file_read();
+	//config_file_read();
 	
 	// Detect Joysticks
-	input_joysticks_detect();
+	//input_joysticks_detect();
 	
 	// Set default input keys
 	input_set_default();
 	
 	// Read the input config file and override defaults
-	input_config_read();
+	//input_config_read();
 	
 	// Set the video dimensions
-	video_set_dimensions();
+	//video_set_dimensions();
 	
 	// Create the window
 	// Set up the callbacks
@@ -1030,13 +1885,13 @@ int main(int argc, char *argv[]) {
 	audio_deinit();
 	
 	// Deinitialize joysticks
-	input_joysticks_close();
+	//input_joysticks_close();
 	
 	// Write the input config file
-	input_config_write();
+	//input_config_write();
 	
 	// Write the config file
-	config_file_write();
+	//config_file_write();
 
 	return 0;
 }

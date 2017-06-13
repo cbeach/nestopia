@@ -26,7 +26,7 @@
 
 #include "main.h"
 #include "cli.h"
-#include "config.h"
+//#include "config.h"
 
 extern settings_t conf;
 
