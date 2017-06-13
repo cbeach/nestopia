@@ -61,12 +61,6 @@
 #include "core/api/NstApiNsf.hpp"
 
 #include "main.h"
-#include "cli.h"
-//#include "audio.h"
-//#include "video.h"
-//#include "input.h"
-//#include "config.h"
-#include "cheats.h"
 #include <ao/ao.h>
 
 #include <grpc/grpc.h>                                                                                                                                                                                              
@@ -1203,7 +1197,7 @@ void nst_dipswitch() {
 				fprintf(stderr, " %d: %s\n", j, dipswitches.GetValueName(i, j));
 			}
 		}
-		dip_handle();
+		//dip_handle();
 	}
 }
 
@@ -1302,7 +1296,7 @@ void nst_play() {
 	video_init();
 	audio_init();
 	input_init();
-	cheats_init();
+	//cheats_init();
 	
 	cNstVideo = new Video::Output;
 	cNstSound = new Sound::Output;
@@ -1831,7 +1825,7 @@ int main(int argc, char *argv[]) {
 	
   int frame_count = 0;
 	while (!nst_quit) {
-        frame_count ++;
+    frame_count ++;
 
 		if (playing) {
       memset(buffer, 0, input_length);
@@ -1866,9 +1860,6 @@ int main(int argc, char *argv[]) {
         int video_scalefactor = conf.video_scale_factor;
         int frame_width = Video::Output::WIDTH * video_scalefactor;
         int frame_height = Video::Output::HEIGHT * video_scalefactor;
-        std::cout << "height: " << frame_height << std::endl;
-        std::cout << "width: " << frame_width << std::endl;
-        std::cout << "----------------------" << std::endl;
         int data_sent = write(newsockfd, videoStream.pixels, frame_height * frame_width * 4);
 			}
 		}

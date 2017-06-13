@@ -341,13 +341,13 @@ OBJS += objs/core/vssystem/NstVsTkoBoxing.o
 
 # Interface
 IOBJS += objs/unix/main.o
-IOBJS += objs/unix/cli.o
+#IOBJS += objs/unix/cli.o
 #IOBJS += objs/unix/audio.o
 #IOBJS += objs/unix/video.o
 #IOBJS += objs/unix/input.o
 #IOBJS += objs/unix/config.o
-IOBJS += objs/unix/cheats.o
-IOBJS += objs/unix/cursor.o
+#IOBJS += objs/unix/cheats.o
+#IOBJS += objs/unix/cursor.o
 IOBJS += objs/unix/ini.o
 IOBJS += objs/unix/png.o
 IOBJS += objs/unix/common.grpc.pb.o
