@@ -2,6 +2,15 @@
 #define _MAIN_H_
 
 #define VERSION "1.47-WIP"
+#define TV_WIDTH 292
+#define OVERSCAN_LEFT 0
+#define OVERSCAN_RIGHT 0
+#define OVERSCAN_BOTTOM 8
+#define OVERSCAN_TOP 8
+#define NUMGAMEPADS 2
+#define NUMBUTTONS 10
+#define TOTALBUTTONS (NUMGAMEPADS*NUMBUTTONS)
+#define DEADZONE (32768/3)
 
 #include <boost/property_tree/ptree.hpp>
 #include <SDL2/SDL.h>
@@ -10,20 +19,11 @@
 #include "core/api/NstApiInput.hpp"
 #include "core/api/NstApiVideo.hpp"
 #include "core/api/NstApiNsf.hpp"
+#include <ao/ao.h>
+
+const int MB = 1048576;
 
 using namespace Nes::Api;
-
-void audio_init();
-void audio_deinit();
-void audio_play();
-void audio_pause();
-void audio_unpause();
-void audio_set_params(Sound::Output *soundoutput);
-void audio_adj_volume();
-
-bool timing_frameskip();
-void timing_set_default();
-void timing_set_altspeed();
 
 typedef struct {
 	char nstdir[256];
@@ -35,54 +35,12 @@ typedef struct {
 	char cheatpath[512];
 } nstpaths_t;
 
-long video_lock_screen(void*& ptr);
-bool nst_archive_checkext(const char *filename);
-bool nst_archive_handle(const char *filename, char **rom, int *romsize, const char *reqfile);
-bool nst_find_patch(char *filename);
-void nst_load_db();
-void nst_load_fds_bios();
-void nst_load(const char *filename);
-void nst_play();
-void nst_pause();
-void nst_reset(bool hardreset);
-void nst_schedule_quit();
-void nst_set_dirs();
-void nst_set_region();
-void nst_set_rewind(int direction);
-
-void nst_set_paths(const char *filename);
-
-void nst_state_save(char *filename);
-void nst_state_load(char *filename);
-void nst_state_quicksave(int isvst);
-void nst_state_quickload(int isvst);
-
-void nst_movie_save(char *filename);
-void nst_movie_load(char *filename);
-void nst_movie_stop();
-
-void nst_fds_info();
-void nst_flip_disk();
-void nst_switch_disk();
-
-void nst_dipswitch();
-
-void video_init();
-void video_set_filter();
-void video_clear_buffer();
 typedef struct {
 	int w;
 	int h;
 } dimensions_t;
-#define TV_WIDTH 292
-#define OVERSCAN_LEFT 0
-#define OVERSCAN_RIGHT 0
-#define OVERSCAN_BOTTOM 8
-#define OVERSCAN_TOP 8
-
 
 typedef struct {
-	
 	// Video
 	int video_filter;
 	int video_scale_factor;
@@ -101,7 +59,6 @@ typedef struct {
 	bool video_stretch_aspect;
 	bool video_unlimited_sprites;
 	bool video_xbr_pixel_blending;
-	
 	// Audio
 	int audio_api;
 	bool audio_stereo;
@@ -118,14 +75,12 @@ typedef struct {
 	int audio_vol_vrc7;
 	int audio_vol_n163;
 	int audio_vol_s5b;
-	
 	// Timing
 	int timing_speed;
 	int timing_altspeed;
 	int timing_turbopulse;
 	bool timing_vsync;
 	bool timing_limiter;
-	
 	// Misc
 	//int misc_video_region;
 	int misc_default_system;
@@ -135,8 +90,6 @@ typedef struct {
 	bool misc_disable_gui;
 	bool misc_config_pause;
 } settings_t;
-
-void config_set_default();
 
 typedef struct {
 	unsigned char player;
@@ -183,6 +136,7 @@ typedef struct {
   unsigned int scalefactor:1;
   unsigned int quit:1;
 } networkinput_t;
+
 typedef struct {
 	SDL_Scancode u;
 	SDL_Scancode d;
@@ -212,35 +166,115 @@ typedef struct {
 	SDL_Scancode qsave2;
 	SDL_Scancode qload1;
 	SDL_Scancode qload2;
-	
 	SDL_Scancode screenshot;
-	
 	SDL_Scancode fdsflip;
 	SDL_Scancode fdsswitch;
-	
 	SDL_Scancode insertcoin1;
 	SDL_Scancode insertcoin2;
-	
 	SDL_Scancode reset;
-	
 	SDL_Scancode altspeed;
 	SDL_Scancode rwstart;
 	SDL_Scancode rwstop;
-	
 	SDL_Scancode fullscreen;
 	SDL_Scancode filter;
 	SDL_Scancode scalefactor;
 } uiinput_t;
 
-void input_init();
-void input_set_default();
-void input_pulse_turbo(Input::Controllers *controllers);
-SDL_Event input_translate_string(char *string);
-void input_match_network(Input::Controllers*, boost::property_tree::ptree);
-void input_inject(Input::Controllers *controllers, nesinput_t input);
+class grpcNESEmulator {
+  public:
+    int sockfd = 0;
+    char buffer[MB];
+    Emulator emulator;
+    bool loaded = false;
+    bool playing = false;
+    bool updateok = false;
+    bool nst_pal = false;
+    bool nst_nsf = false;
+    settings_t conf;
+    int nst_quit = 0;
+    nstpaths_t nstpaths;
+    Video::Output *cNstVideo;
+    Sound::Output *cNstSound;
+    Input::Controllers *cNstPads;
+    Cartridge::Database::Entry dbentry;
+    std::ifstream *nstdb;
+    std::ifstream *fdsbios;
+    std::ifstream *moviefile;
+    std::fstream *movierecfile;
+    turbo_t turbostate;
+    turbo_t turbotoggle;
+    Video::Output videoStream;
+    dimensions_t basesize, rendersize;
+    uint32_t videobuf[31457280]; // Maximum possible internal size
+    Video::RenderState::Filter filter;
+    Video::RenderState renderstate;
+    ao_device *aodevice;
+    ao_sample_format format;
+    SDL_AudioSpec spec, obtained;
+    SDL_AudioDeviceID dev;
+    int16_t audiobuf[96000];
+    int framerate, channels, bufsize;
+    bool altspeed = true;
+    uiinput_t ui;
+    gamepad_t player[NUMGAMEPADS];
 
-#define NUMGAMEPADS 2
-#define NUMBUTTONS 10
-#define TOTALBUTTONS (NUMGAMEPADS*NUMBUTTONS)
-#define DEADZONE (32768/3)
+    //bool NST_CALLBACK VideoLock(void* , Video::Output&);
+    //void NST_CALLBACK VideoUnlock(void* , Video::Output&);
+    //bool NST_CALLBACK SoundLock(void* , Sound::Output&);
+    //void NST_CALLBACK SoundUnlock(void* , Sound::Output&);
+    //void NST_CALLBACK nst_cb_event(void*, User::Event, const void*);
+    //void NST_CALLBACK nst_cb_log(void*, const char*, unsigned long int);
+    //void NST_CALLBACK nst_cb_file(void*, User::File&);
+    void nst_unload();
+    Nes::Api::Machine::FavoredSystem nst_default_system();
+    grpcNESEmulator(int);
+    void audio_init();
+    void audio_deinit();
+    void audio_play();
+    void audio_pause();
+    void audio_unpause();
+    void audio_set_params(Sound::Output *soundoutput);
+    void audio_adj_volume();
+    bool timing_frameskip();
+    void timing_set_default();
+    void timing_set_altspeed();
+    bool nst_archive_checkext(const char *filename);
+    bool nst_archive_handle(const char *filename, char **rom, int *romsize, const char *reqfile);
+    bool nst_find_patch(char *filename);
+    void nst_load_db();
+    void nst_load_fds_bios();
+    void nst_load(const char *filename);
+    void nst_play();
+    void nst_pause();
+    void nst_reset(bool hardreset);
+    void nst_schedule_quit();
+    void nst_set_dirs();
+    void nst_set_region();
+    void nst_set_rewind(int direction);
+    void nst_set_paths(const char *filename);
+    void nst_state_save(char *filename);
+    void nst_state_load(char *filename);
+    void nst_state_quicksave(int isvst);
+    void nst_state_quickload(int isvst);
+    void nst_movie_save(char *filename);
+    void nst_movie_load(char *filename);
+    void nst_movie_stop();
+    void nst_fds_info();
+    void nst_flip_disk();
+    void nst_switch_disk();
+    void nst_dipswitch();
+    void video_init();
+    void video_set_filter();
+    void video_clear_buffer();
+    void config_set_default();
+    void input_init();
+    void input_set_default();
+    void input_pulse_turbo(Input::Controllers *controllers);
+    SDL_Event input_translate_string(char *string);
+    void input_match_network(Input::Controllers*, boost::property_tree::ptree);
+    void input_inject(Input::Controllers *controllers, nesinput_t input);
+    long video_lock_screen(void*& ptr);
+    int main(int, char**);
+};
+
 #endif

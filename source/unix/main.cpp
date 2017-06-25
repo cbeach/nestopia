@@ -31,6 +31,8 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <functional>
+#include <memory>
 
 #include <iomanip>
 #include <vector>
@@ -61,74 +63,157 @@
 #include "core/api/NstApiNsf.hpp"
 
 #include "main.h"
-#include <ao/ao.h>
 
-#include <grpc/grpc.h>                                                                                                                                                                                              
-#include <grpc++/server.h>                                                                                                                                                 
-#include <grpc++/server_builder.h>                                                                                                                                         
-#include <grpc++/server_context.h>                                                                                                                                         
-#include <grpc++/security/server_credentials.h>                                                                                                                            
-#include "deep_thought.grpc.pb.h"
+//#include <grpc/grpc.h>                                                                                                                                                                                              
+//#include <grpc++/server.h>                                                                                                                                                 
+//#include <grpc++/server_builder.h>                                                                                                                                         
+//#include <grpc++/server_context.h>                                                                                                                                         
+//#include <grpc++/security/server_credentials.h>                                                                                                                            
+//#include "deep_thought.grpc.pb.h"
 
 using namespace Nes::Api;
 
-const int MB = 1048576;
-settings_t conf;
 
-// base class, all interfaces derives from this
-Emulator emulator;
+grpcNESEmulator::grpcNESEmulator (int sfd) {
+  sockfd = sfd;
+}
 
-bool loaded = false;
-bool playing = false;
-bool updateok = false;
+// called right before Nestopia is about to write pixels
+bool NST_CALLBACK VideoLock(grpcNESEmulator* self, void* userData, Video::Output& video) {
+	video.pitch = self->video_lock_screen(video.pixels);
+	return true; // true=lock success, false=lock failed (Nestopia will carry on but skip video)
+}
 
-bool nst_pal = false;
-bool nst_nsf = false;
+// called right after Nestopia has finished writing pixels (not called if previous lock failed)
+void NST_CALLBACK VideoUnlock(grpcNESEmulator& self, void* userData, Video::Output& video) {
+  self.videoStream = video;
+	//video_unlock_screen(video.pixels);
+}
 
-static int nst_quit = 0;
+bool NST_CALLBACK SoundLock(void* userData, Sound::Output& sound) {
+	return true;
+}
 
-nstpaths_t nstpaths;
+void NST_CALLBACK SoundUnlock(void* userData, Sound::Output& sound) {
+	// Do Nothing
+}
 
-static Video::Output *cNstVideo;
-static Sound::Output *cNstSound;
-static Input::Controllers *cNstPads;
-static Cartridge::Database::Entry dbentry;
+void NST_CALLBACK nst_cb_event(void *userData, User::Event event, const void* data) {
+	// Handle special events
+	switch (event) {
+		case User::EVENT_CPU_JAM:
+			fprintf(stderr, "Cpu: Jammed\n");
+			break;
+		case User::EVENT_CPU_UNOFFICIAL_OPCODE:
+			fprintf(stderr, "Cpu: Unofficial Opcode %s\n", (const char*)data);
+			break;
+		case User::EVENT_DISPLAY_TIMER:
+			fprintf(stderr, "\r%s", (const char*)data);
+			//snprintf(timebuf, sizeof(timebuf), "%s", (const char*)data + strlen((char*)data) - 5);
+			//drawtime = true;
+			break;
+		default: break;
+	}
+}
 
-static std::ifstream *nstdb;
-static std::ifstream *fdsbios;
+void NST_CALLBACK nst_cb_log(void *userData, const char *string, unsigned long int length) {
+	// Print logging information to stderr
+	fprintf(stderr, "%s", string);
+}
 
-static std::ifstream *moviefile;
-static std::fstream *movierecfile;
+/*
+void NST_CALLBACK nst_cb_file(grpcNESEmulator& self, void *userData, User::File& file) {
+	unsigned char *compbuffer;
+	int compsize, compoffset;
+	char *filename;
+	
+	switch (file.GetAction()) {
+		case User::File::LOAD_ROM:
+			// Nothing here for now			
+			break;
 
-extern settings_t conf;
+		case User::File::LOAD_SAMPLE:
+		case User::File::LOAD_SAMPLE_MOERO_PRO_YAKYUU:
+		case User::File::LOAD_SAMPLE_MOERO_PRO_YAKYUU_88:
+		case User::File::LOAD_SAMPLE_MOERO_PRO_TENNIS:
+		case User::File::LOAD_SAMPLE_TERAO_NO_DOSUKOI_OOZUMOU:
+		case User::File::LOAD_SAMPLE_AEROBICS_STUDIO:
+			// Nothing here for now
+			break;
 
-turbo_t turbostate;
-turbo_t turbotoggle;
+		case User::File::LOAD_BATTERY: // load in battery data from a file
+		case User::File::LOAD_EEPROM: // used by some Bandai games, can be treated the same as battery files
+		case User::File::LOAD_TAPE: // for loading Famicom cassette tapes
+		case User::File::LOAD_TURBOFILE: // for loading turbofile data
+		{		
+			std::ifstream batteryFile(self.nstpaths.savename, std::ifstream::in|std::ifstream::binary);
+			
+			if (batteryFile.is_open()) { file.SetContent(batteryFile); }
+			break;
+		}
+		
+		case User::File::SAVE_BATTERY: // save battery data to a file
+		case User::File::SAVE_EEPROM: // can be treated the same as battery files
+		case User::File::SAVE_TAPE: // for saving Famicom cassette tapes
+		case User::File::SAVE_TURBOFILE: // for saving turbofile data
+		{
+			std::ofstream batteryFile(nstpaths.savename, std::ifstream::out|std::ifstream::binary);
+			const void* savedata;
+			unsigned long savedatasize;
 
-//extern char timebuf[6];
-Video::Output videoStream;
+			file.GetContent(savedata, savedatasize);
 
-dimensions_t basesize, rendersize;
-static uint32_t videobuf[31457280]; // Maximum possible internal size
-Video::RenderState::Filter filter;
-Video::RenderState renderstate;
+			if (batteryFile.is_open()) { batteryFile.write((const char*) savedata, savedatasize); }
 
-ao_device *aodevice;
-ao_sample_format format;
+			break;
+		}
 
-SDL_AudioSpec spec, obtained;
-SDL_AudioDeviceID dev;
+		case User::File::LOAD_FDS: // for loading modified Famicom Disk System files
+		{
+			char fdsname[512];
 
-int16_t audiobuf[96000];
+			snprintf(fdsname, sizeof(fdsname), "%s.ups", nstpaths.fdssave);
+			
+			std::ifstream batteryFile( fdsname, std::ifstream::in|std::ifstream::binary );
 
-int framerate, channels, bufsize;
+			// no ups, look for ips
+			if (!batteryFile.is_open())
+			{
+				snprintf(fdsname, sizeof(fdsname), "%s.ips", nstpaths.fdssave);
 
-bool altspeed = true;
-uiinput_t ui;
+				std::ifstream batteryFile( fdsname, std::ifstream::in|std::ifstream::binary );
 
-gamepad_t player[NUMGAMEPADS];
+				if (!batteryFile.is_open())
+				{
+					return;
+				}
 
-SDL_Event input_translate_string(char *string) {
+				file.SetPatchContent(batteryFile);
+				return;
+			}
+
+			file.SetPatchContent(batteryFile);
+			break;
+		}
+
+		case User::File::SAVE_FDS: // for saving modified Famicom Disk System files
+		{
+			char fdsname[512];
+
+			snprintf(fdsname, sizeof(fdsname), "%s.ups", nstpaths.fdssave);
+
+			std::ofstream fdsFile( fdsname, std::ifstream::out|std::ifstream::binary );
+
+			if (fdsFile.is_open())
+				file.GetPatchContent( User::File::PATCH_UPS, fdsFile );
+
+			break;
+		}
+	}
+}
+*/
+
+SDL_Event grpcNESEmulator::input_translate_string(char *string) {
 	// Translate an inputcode to an SDL_Event
 	SDL_Event event;
 	
@@ -166,7 +251,8 @@ SDL_Event input_translate_string(char *string) {
 	
 	return event;
 }
-void input_pulse_turbo(Input::Controllers *controllers) {
+
+void grpcNESEmulator::input_pulse_turbo(Input::Controllers *controllers) {
 	// Pulse the turbo buttons if they're pressed
 	if (turbostate.p1a) {
 		turbotoggle.p1a++;
@@ -204,7 +290,7 @@ void input_pulse_turbo(Input::Controllers *controllers) {
 		else { controllers->pad[1].buttons |= Input::Controllers::Pad::B; }
 	}
 }
-void input_set_default() {
+void grpcNESEmulator::input_set_default() {
 	// Set default input config
 	
 	ui.qsave1 = SDL_GetScancodeFromName("F5");
@@ -274,7 +360,7 @@ void input_set_default() {
 	player[1].jta = input_translate_string("j1b2");
 	player[1].jtb = input_translate_string("j1b3");
 }
-void input_inject(Input::Controllers *controllers, nesinput_t input) {
+void grpcNESEmulator::input_inject(Input::Controllers *controllers, nesinput_t input) {
 	// Insert the input signal into the NES
 	if (input.pressed) {
 		controllers->pad[input.player].buttons |= input.nescode;
@@ -289,7 +375,7 @@ void input_inject(Input::Controllers *controllers, nesinput_t input) {
 		if (input.turbob) { input.player == 0 ? turbostate.p1b = false : turbostate.p2b = false; }
 	}
 }
-void input_match_network(Input::Controllers *controllers, boost::property_tree::ptree input) {
+void grpcNESEmulator::input_match_network(Input::Controllers *controllers, boost::property_tree::ptree input) {
   // Match NES buttons to keyboard buttons
   nesinput_t nesinput;
   
@@ -429,7 +515,7 @@ void input_match_network(Input::Controllers *controllers, boost::property_tree::
   //}
   input_inject(controllers, nesinput);
 }
-void input_init() {
+void grpcNESEmulator::input_init() {
 	// Initialize input
 	
 	char controller[32];
@@ -525,7 +611,7 @@ void input_init() {
 	}
 	
 }
-void config_set_default() {
+void grpcNESEmulator::config_set_default() {
 	
 	// Video
 	conf.video_filter = 0;
@@ -578,7 +664,7 @@ void config_set_default() {
 	conf.misc_disable_gui = false;
 	conf.misc_config_pause = false;
 }
-void audio_play() {
+void grpcNESEmulator::audio_play() {
 	
 	bufsize = 2 * channels * (conf.audio_sample_rate / framerate);
 	
@@ -595,7 +681,7 @@ void audio_play() {
 	updateok = true;
 }
 
-void audio_init() {
+void grpcNESEmulator::audio_init() {
 	// Initialize audio device
 	
 	// Set the framerate based on the region. For PAL: (60 / 6) * 5 = 50
@@ -654,7 +740,7 @@ void audio_init() {
 	}
 }
 
-void audio_deinit() {
+void grpcNESEmulator::audio_deinit() {
 	// Deinitialize audio
 	
 	if (conf.audio_api == 0) { // SDL
@@ -666,21 +752,21 @@ void audio_deinit() {
 	}
 }
 
-void audio_pause() {
+void grpcNESEmulator::audio_pause() {
 	// Pause the SDL audio device
 	if (conf.audio_api == 0) { // SDL
 		SDL_PauseAudioDevice(dev, 1);
 	}
 }
 
-void audio_unpause() {
+void grpcNESEmulator::audio_unpause() {
 	// Unpause the SDL audio device
 	if (conf.audio_api == 0) { // SDL
 		SDL_PauseAudioDevice(dev, 0);
 	}
 }
 
-void audio_set_params(Sound::Output *soundoutput) {
+void grpcNESEmulator::audio_set_params(Sound::Output *soundoutput) {
 	// Set audio parameters
 	Sound sound(emulator);
 	
@@ -698,7 +784,7 @@ void audio_set_params(Sound::Output *soundoutput) {
 	soundoutput->length[1] = 0;
 }
 
-void audio_adj_volume() {
+void grpcNESEmulator::audio_adj_volume() {
 	// Adjust the audio volume to the current settings
 	Sound sound(emulator);
 	sound.SetVolume(Sound::ALL_CHANNELS, conf.audio_volume);
@@ -719,7 +805,7 @@ void audio_adj_volume() {
 
 // Timing Functions
 
-bool timing_frameskip() {
+bool grpcNESEmulator::timing_frameskip() {
 	// Calculate whether to skip a frame or not
 	if (conf.audio_api == 0) { // SDL
 		// Wait until the audio is drained
@@ -740,7 +826,7 @@ bool timing_frameskip() {
 	return false;
 }
 
-void timing_set_default() {
+void grpcNESEmulator::timing_set_default() {
 	// Set the framerate to the default
 	//altspeed = false;
 	//framerate = nst_pal ? (conf.timing_speed / 6) * 5 : conf.timing_speed;
@@ -751,12 +837,12 @@ void timing_set_default() {
 	#endif
 }
 
-void timing_set_altspeed() {
+void grpcNESEmulator::timing_set_altspeed() {
 	// Set the framerate to the alternate speed
 	altspeed = true;
 	framerate = conf.timing_altspeed;
 }
-void video_init() {
+void grpcNESEmulator::video_init() {
 	// Initialize video
 	//opengl_cleanup();
 	
@@ -778,14 +864,14 @@ void video_init() {
 	
 	//video_set_cursor();
 }
-void video_clear_buffer() {
+void grpcNESEmulator::video_clear_buffer() {
 	// Write black to the video buffer
 	for (int i = 0; i < 31457280; i++) {
 		videobuf[i] = 0x00000000;
 	}
 }
 
-void video_set_filter() {
+void grpcNESEmulator::video_set_filter() {
 	// Set the filter
 	Video video(emulator);
 	int scalefactor = conf.video_scale_factor;
@@ -960,145 +1046,12 @@ void video_set_filter() {
 // *******************
 
 
-long video_lock_screen(void*& ptr) {
+long grpcNESEmulator::video_lock_screen(void*& ptr) {
 	ptr = videobuf;
 	return Video::Output::WIDTH * 4;
 }
 
-// called right before Nestopia is about to write pixels
-static bool NST_CALLBACK VideoLock(void* userData, Video::Output& video) {
-	video.pitch = video_lock_screen(video.pixels);
-	return true; // true=lock success, false=lock failed (Nestopia will carry on but skip video)
-}
-
-// called right after Nestopia has finished writing pixels (not called if previous lock failed)
-static void NST_CALLBACK VideoUnlock(void* userData, Video::Output& video) {
-  videoStream = video;
-	//video_unlock_screen(video.pixels);
-}
-
-static bool NST_CALLBACK SoundLock(void* userData, Sound::Output& sound) {
-	return true;
-}
-
-static void NST_CALLBACK SoundUnlock(void* userData, Sound::Output& sound) {
-	// Do Nothing
-}
-
-static void NST_CALLBACK nst_cb_event(void *userData, User::Event event, const void* data) {
-	// Handle special events
-	switch (event) {
-		case User::EVENT_CPU_JAM:
-			fprintf(stderr, "Cpu: Jammed\n");
-			break;
-		case User::EVENT_CPU_UNOFFICIAL_OPCODE:
-			fprintf(stderr, "Cpu: Unofficial Opcode %s\n", (const char*)data);
-			break;
-		case User::EVENT_DISPLAY_TIMER:
-			fprintf(stderr, "\r%s", (const char*)data);
-			//snprintf(timebuf, sizeof(timebuf), "%s", (const char*)data + strlen((char*)data) - 5);
-			//drawtime = true;
-			break;
-		default: break;
-	}
-}
-
-static void NST_CALLBACK nst_cb_log(void *userData, const char *string, unsigned long int length) {
-	// Print logging information to stderr
-	fprintf(stderr, "%s", string);
-}
-
-static void NST_CALLBACK nst_cb_file(void *userData, User::File& file) {
-	unsigned char *compbuffer;
-	int compsize, compoffset;
-	char *filename;
-	
-	switch (file.GetAction()) {
-		case User::File::LOAD_ROM:
-			// Nothing here for now			
-			break;
-
-		case User::File::LOAD_SAMPLE:
-		case User::File::LOAD_SAMPLE_MOERO_PRO_YAKYUU:
-		case User::File::LOAD_SAMPLE_MOERO_PRO_YAKYUU_88:
-		case User::File::LOAD_SAMPLE_MOERO_PRO_TENNIS:
-		case User::File::LOAD_SAMPLE_TERAO_NO_DOSUKOI_OOZUMOU:
-		case User::File::LOAD_SAMPLE_AEROBICS_STUDIO:
-			// Nothing here for now
-			break;
-
-		case User::File::LOAD_BATTERY: // load in battery data from a file
-		case User::File::LOAD_EEPROM: // used by some Bandai games, can be treated the same as battery files
-		case User::File::LOAD_TAPE: // for loading Famicom cassette tapes
-		case User::File::LOAD_TURBOFILE: // for loading turbofile data
-		{		
-			std::ifstream batteryFile(nstpaths.savename, std::ifstream::in|std::ifstream::binary);
-			
-			if (batteryFile.is_open()) { file.SetContent(batteryFile); }
-			break;
-		}
-		
-		case User::File::SAVE_BATTERY: // save battery data to a file
-		case User::File::SAVE_EEPROM: // can be treated the same as battery files
-		case User::File::SAVE_TAPE: // for saving Famicom cassette tapes
-		case User::File::SAVE_TURBOFILE: // for saving turbofile data
-		{
-			std::ofstream batteryFile(nstpaths.savename, std::ifstream::out|std::ifstream::binary);
-			const void* savedata;
-			unsigned long savedatasize;
-
-			file.GetContent(savedata, savedatasize);
-
-			if (batteryFile.is_open()) { batteryFile.write((const char*) savedata, savedatasize); }
-
-			break;
-		}
-
-		case User::File::LOAD_FDS: // for loading modified Famicom Disk System files
-		{
-			char fdsname[512];
-
-			snprintf(fdsname, sizeof(fdsname), "%s.ups", nstpaths.fdssave);
-			
-			std::ifstream batteryFile( fdsname, std::ifstream::in|std::ifstream::binary );
-
-			// no ups, look for ips
-			if (!batteryFile.is_open())
-			{
-				snprintf(fdsname, sizeof(fdsname), "%s.ips", nstpaths.fdssave);
-
-				std::ifstream batteryFile( fdsname, std::ifstream::in|std::ifstream::binary );
-
-				if (!batteryFile.is_open())
-				{
-					return;
-				}
-
-				file.SetPatchContent(batteryFile);
-				return;
-			}
-
-			file.SetPatchContent(batteryFile);
-			break;
-		}
-
-		case User::File::SAVE_FDS: // for saving modified Famicom Disk System files
-		{
-			char fdsname[512];
-
-			snprintf(fdsname, sizeof(fdsname), "%s.ups", nstpaths.fdssave);
-
-			std::ofstream fdsFile( fdsname, std::ifstream::out|std::ifstream::binary );
-
-			if (fdsFile.is_open())
-				file.GetPatchContent( User::File::PATCH_UPS, fdsFile );
-
-			break;
-		}
-	}
-}
-
-static void nst_unload() {
+void grpcNESEmulator::nst_unload() {
 	// Remove the cartridge and shut down the NES
 	Machine machine(emulator);
 	
@@ -1112,7 +1065,7 @@ static void nst_unload() {
 	machine.Unload();
 }
 
-void nst_pause() {
+void grpcNESEmulator::nst_pause() {
 	// Pauses the game
 	if (playing) {
 		audio_pause();
@@ -1123,7 +1076,7 @@ void nst_pause() {
 	//video_set_cursor();
 }
 
-void nst_fds_info() {
+void grpcNESEmulator::nst_fds_info() {
 	Fds fds(emulator);
 
 	char* disk;
@@ -1136,7 +1089,7 @@ void nst_fds_info() {
 	//snprintf(textbuf, sizeof(textbuf), "Disk %s Side %s", disk, side); drawtext = 120;
 }
 
-void nst_flip_disk() {
+void grpcNESEmulator::nst_flip_disk() {
 	// Flips the FDS disk
 	Fds fds(emulator);
 
@@ -1146,7 +1099,7 @@ void nst_flip_disk() {
 	}
 }
 
-void nst_switch_disk() {
+void grpcNESEmulator::nst_switch_disk() {
 	// Switches the FDS disk in multi-disk games
 	Fds fds(emulator);
 	
@@ -1160,7 +1113,7 @@ void nst_switch_disk() {
 	}
 }
 
-static Machine::FavoredSystem nst_default_system() {
+Machine::FavoredSystem grpcNESEmulator::nst_default_system() {
 	switch (conf.misc_default_system) {
 		case 0:
 			return Machine::FAVORED_NES_NTSC;
@@ -1182,7 +1135,7 @@ static Machine::FavoredSystem nst_default_system() {
 	return Machine::FAVORED_NES_NTSC;
 }
 
-void nst_dipswitch() {
+void grpcNESEmulator::nst_dipswitch() {
 	// Print DIP switch information and call handler
 	DipSwitches dipswitches(emulator);
 		
@@ -1201,7 +1154,7 @@ void nst_dipswitch() {
 	}
 }
 
-void nst_state_save(char *filename) {
+void grpcNESEmulator::nst_state_save(char *filename) {
 	// Save a state by filename
 	Machine machine(emulator);
 	
@@ -1212,7 +1165,7 @@ void nst_state_save(char *filename) {
 	//snprintf(textbuf, sizeof(textbuf), "State Saved."); drawtext = 120;
 }
 
-void nst_state_load(char *filename) {
+void grpcNESEmulator::nst_state_load(char *filename) {
 	// Load a state by filename
 	Machine machine(emulator);
 	
@@ -1223,7 +1176,7 @@ void nst_state_load(char *filename) {
 	//snprintf(textbuf, sizeof(textbuf), "State Loaded."); drawtext = 120; 
 }
 
-void nst_state_quicksave(int slot) {
+void grpcNESEmulator::nst_state_quicksave(int slot) {
 	// Quick Save State
 	char slotpath[520];
 	snprintf(slotpath, sizeof(slotpath), "%s_%d.nst", nstpaths.statepath, slot);
@@ -1231,7 +1184,7 @@ void nst_state_quicksave(int slot) {
 }
 
 
-void nst_state_quickload(int slot) {
+void grpcNESEmulator::nst_state_quickload(int slot) {
 	// Quick Load State
 	char slotpath[520];
 	snprintf(slotpath, sizeof(slotpath), "%s_%d.nst", nstpaths.statepath, slot);
@@ -1246,7 +1199,7 @@ void nst_state_quickload(int slot) {
 	nst_state_load(slotpath);
 }
 
-void nst_movie_save(char *filename) {
+void grpcNESEmulator::nst_movie_save(char *filename) {
 	// Save/Record a movie
 	Movie movie(emulator);
 	
@@ -1261,7 +1214,7 @@ void nst_movie_save(char *filename) {
 	}
 }
 
-void nst_movie_load(char *filename) {
+void grpcNESEmulator::nst_movie_load(char *filename) {
 	// Load and play a movie
 	Movie movie(emulator);
 	
@@ -1276,7 +1229,7 @@ void nst_movie_load(char *filename) {
 	}
 }
 
-void nst_movie_stop() {
+void grpcNESEmulator::nst_movie_stop() {
 	// Stop any movie that is playing or recording
 	Movie movie(emulator);
 	
@@ -1289,7 +1242,7 @@ void nst_movie_stop() {
 	}
 }
 
-void nst_play() {
+void grpcNESEmulator::nst_play() {
 	// Play the game
 	if (playing || !loaded) { return; }
 	
@@ -1315,7 +1268,7 @@ void nst_play() {
 	playing = true;
 }
 
-void nst_reset(bool hardreset) {
+void grpcNESEmulator::nst_reset(bool hardreset) {
 	// Reset the machine (soft or hard)
 	Machine machine(emulator);
 	Fds fds(emulator);
@@ -1326,11 +1279,11 @@ void nst_reset(bool hardreset) {
 	fds.InsertDisk(0, 0);
 }
 
-void nst_schedule_quit() {
+void grpcNESEmulator::nst_schedule_quit() {
 	nst_quit = 1;
 }
 
-void nst_set_dirs() {
+void grpcNESEmulator::nst_set_dirs() {
 	// create system directory if it doesn't exist
 	snprintf(nstpaths.nstdir, sizeof(nstpaths.nstdir), "%s/.nestopia/", getenv("HOME"));
 	if (mkdir(nstpaths.nstdir, 0755) && errno != EEXIST) {	
@@ -1361,7 +1314,7 @@ void nst_set_dirs() {
 	}
 }
 
-void nst_set_region() {
+void grpcNESEmulator::nst_set_region() {
 	// Set the region
 	Machine machine(emulator);
 	Cartridge::Database database(emulator);
@@ -1386,7 +1339,7 @@ void nst_set_region() {
 	}
 }
 
-void nst_set_rewind(int direction) {
+void grpcNESEmulator::nst_set_rewind(int direction) {
 	// Set the rewinder backward or forward
 	switch (direction) {
 		case 0:
@@ -1401,7 +1354,7 @@ void nst_set_rewind(int direction) {
 	}
 }
 
-void nst_set_paths(const char *filename) {
+void grpcNESEmulator::nst_set_paths(const char *filename) {
 	
 	// Set up the save directory
 	snprintf(nstpaths.savedir, sizeof(nstpaths.savedir), "%ssave/", nstpaths.nstdir);
@@ -1433,7 +1386,7 @@ void nst_set_paths(const char *filename) {
 	snprintf(nstpaths.cheatpath, sizeof(nstpaths.cheatpath), "%scheats/%s.xml", nstpaths.nstdir, nstpaths.gamename);
 }
 
-bool nst_archive_checkext(const char *filename) {
+bool grpcNESEmulator::nst_archive_checkext(const char *filename) {
 	// Check if the file extension is valid
 	int len = strlen(filename);
 
@@ -1448,7 +1401,7 @@ bool nst_archive_checkext(const char *filename) {
 	return false;
 }
 
-bool nst_archive_handle(const char *filename, char **rom, int *romsize, const char *reqfile) {
+bool grpcNESEmulator::nst_archive_handle(const char *filename, char **rom, int *romsize, const char *reqfile) {
 	// Handle archives
 	struct archive *a;
 	struct archive_entry *entry;
@@ -1503,7 +1456,7 @@ bool nst_archive_handle(const char *filename, char **rom, int *romsize, const ch
 	return false;
 }
 
-bool nst_find_patch(char *filename) {
+bool grpcNESEmulator::nst_find_patch(char *filename) {
 	// Check for a patch in the same directory as the game
 	FILE *file;
 	
@@ -1529,7 +1482,7 @@ bool nst_find_patch(char *filename) {
 	return 0;
 }
 
-void nst_load_db() {
+void grpcNESEmulator::nst_load_db() {
 	Nes::Api::Cartridge::Database database(emulator);
 	char dbpath[512];
 
@@ -1571,7 +1524,7 @@ void nst_load_db() {
 	}
 }
 
-void nst_load_fds_bios() {
+void grpcNESEmulator::nst_load_fds_bios() {
 	// Load the Famicom Disk System BIOS
 	Nes::Api::Fds fds(emulator);
 	char biospath[512];
@@ -1592,7 +1545,7 @@ void nst_load_fds_bios() {
 	}
 }
 
-void nst_load(const char *filename) {
+void grpcNESEmulator::nst_load(const char *filename) {
 	// Load a Game ROM
 	Machine machine(emulator);
 	Nsf nsf(emulator);
@@ -1695,59 +1648,8 @@ void nst_load(const char *filename) {
 	nst_play();
 }
 
-int main(int argc, char *argv[]) {
-  int sockfd = 0;
-  int newsockfd = 0;
-  socklen_t clilen = 0;
-  int portno = 9090;
-  struct sockaddr_in serv_addr, cli_addr;
-  int  n, pid;
-
-  sockfd = socket(AF_INET, SOCK_STREAM, 0);
-  if (sockfd < 0) {
-    perror("Error opening socket");
-    exit(1);
-  }
-
-  /* Initialize socket structure */
-  bzero((char *) &serv_addr, sizeof(serv_addr));
-
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_addr.s_addr = INADDR_ANY;
-  serv_addr.sin_port = htons(portno);
-
-  /* Now bind the host address using bind() call.*/
-  if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
-    perror("ERROR on binding");
-    exit(1);
-  }
-  // 1 MB
-  char buffer[MB];
-
-  while (1) {
-    /* Now start listening for the clients, here
-    * process will go in sleep mode and will wait
-    * for the incoming connection
-    */
-    listen(sockfd,5);
-    clilen = sizeof(cli_addr);
-    newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
-    if (newsockfd < 0) {
-        perror("ERROR on accept");
-        exit(1);
-    }
-    
-    /* Create child process */
-    pid = fork();
-    if (pid < 0) {
-        perror("ERROR on fork");
-        exit(1);
-    } else if (pid == 0) {
-        /* This is the client process */
-        break;
-    }
-  } /* end of while */
-
+int grpcNESEmulator::main(int argc, char *argv[]) {
+  using namespace std::placeholders;
 	// This is the main function
 	
 	static SDL_Event event;
@@ -1776,15 +1678,39 @@ int main(int argc, char *argv[]) {
 	
 	// Create the window
 	// Set up the callbacks
-	Video::Output::lockCallback.Set(VideoLock, userData);
-	Video::Output::unlockCallback.Set(VideoUnlock, userData);
-	
-	Sound::Output::lockCallback.Set(SoundLock, userData);
-	Sound::Output::unlockCallback.Set(SoundUnlock, userData);
-	
-	User::fileIoCallback.Set(nst_cb_file, userData);
-	User::logCallback.Set(nst_cb_log, userData);
-	User::eventCallback.Set(nst_cb_event, userData);
+  //auto vLock = [&](void* userData, Video::Output& video) -> bool {
+  //  VideoLock(userData, video);
+  //  return true;
+  //};
+  //auto vUnlock = [&](void* userData, Video::Output& video) {
+  //  VideoUnlock(userData, video);
+  //};
+  //auto sLock = [&](void* userData, Sound::Output& sound) -> bool {
+  //  SoundLock(userData, sound);
+  //  return true;
+  //};
+  //auto sUnlock = [&](void* userData, Sound::Output& sound) {
+  //  SoundUnlock(userData, sound);
+  //};
+  //auto cbEvent = [&](void* userData, User::Event event, const void* data) {
+  //  nst_cb_event(userData, event, data);
+  //};
+  //auto cbLog = [&](void* userData, const char *string, unsigned long int length) {
+  //  nst_cb_log(userData, string, length);
+  //}
+  //auto cbFile = [&](void* userData, User::File& file) {
+  //  nst_cb_file(userData, file);
+  //};
+  auto f = std::bind(VideoLock, this, std::placeholders::_1, std::placeholders::_2);
+	Video::Output::lockCallback.Set(f, userData);
+	//Video::Output::unlockCallback.Set(VideoUnlock, userData);
+	//
+	//Sound::Output::lockCallback.Set(SoundLock, userData);
+	//Sound::Output::unlockCallback.Set(SoundUnlock, userData);
+	//
+	//User::fileIoCallback.Set(nst_cb_file, userData);
+	//User::logCallback.Set(nst_cb_log, userData);
+	//User::eventCallback.Set(nst_cb_event, userData);
 	
 	// Initialize and load FDS BIOS and NstDatabase.xml
 	nstdb = NULL;
@@ -1793,7 +1719,7 @@ int main(int argc, char *argv[]) {
 	nst_load_fds_bios();
 
 	// Load a rom from the command line
-  int input_length = read(newsockfd, buffer, sizeof(char) * MB);
+  int input_length = read(sockfd, buffer, sizeof(char) * MB);
 
   std::stringstream rom_stream;
   rom_stream << std::string(buffer);
@@ -1815,7 +1741,7 @@ int main(int argc, char *argv[]) {
     std::ostringstream response_stream;
     boost::property_tree::write_json(response_stream, init_response);  
     std::string response_string = response_stream.str();
-    write(newsockfd, response_string.c_str(), response_string.size());
+    write(sockfd, response_string.c_str(), response_string.size());
   } else {
     fprintf(stderr, "Fatal: Could not load ROM\n");
     exit(1);
@@ -1829,7 +1755,7 @@ int main(int argc, char *argv[]) {
 
 		if (playing) {
       memset(buffer, 0, input_length);
-      input_length = read(newsockfd, buffer, sizeof(char) * MB);
+      input_length = read(sockfd, buffer, sizeof(char) * MB);
       std::stringstream ss;
       ss << std::string(buffer);
       boost::property_tree::ptree tree;
@@ -1860,7 +1786,7 @@ int main(int argc, char *argv[]) {
         int video_scalefactor = conf.video_scale_factor;
         int frame_width = Video::Output::WIDTH * video_scalefactor;
         int frame_height = Video::Output::HEIGHT * video_scalefactor;
-        int data_sent = write(newsockfd, videoStream.pixels, frame_height * frame_width * 4);
+        int data_sent = write(sockfd, videoStream.pixels, frame_height * frame_width * 4);
 			}
 		}
 	}
@@ -1885,4 +1811,60 @@ int main(int argc, char *argv[]) {
 	//config_file_write();
 
 	return 0;
+}
+
+int main(int argc, char *argv[]) {
+  int sockfd = 0;
+  int newsockfd = 0;
+  socklen_t clilen = 0;
+  int portno = 9090;
+  struct sockaddr_in serv_addr, cli_addr;
+  int  n, pid;
+
+  sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  if (sockfd < 0) {
+    perror("Error opening socket");
+    exit(1);
+  }
+
+  /* Initialize socket structure */
+  bzero((char *) &serv_addr, sizeof(serv_addr));
+
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_addr.s_addr = INADDR_ANY;
+  serv_addr.sin_port = htons(portno);
+
+  /* Now bind the host address using bind() call.*/
+  if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+    perror("ERROR on binding");
+    exit(1);
+  }
+  // 1 MB
+
+  while (1) {
+    /* Now start listening for the clients, here
+    * process will go in sleep mode and will wait
+    * for the incoming connection
+    */
+    listen(sockfd,5);
+    clilen = sizeof(cli_addr);
+    newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+    if (newsockfd < 0) {
+        perror("ERROR on accept");
+        exit(1);
+    }
+    
+    /* Create child process */
+    pid = fork();
+    if (pid < 0) {
+        perror("ERROR on fork");
+        exit(1);
+    } else if (pid == 0) {
+        /* This is the client process */
+        grpcNESEmulator emu (newsockfd);
+        emu.main(argc, argv);
+        break;
+    }
+  } /* end of while */
+
 }
